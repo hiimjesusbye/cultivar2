@@ -16,8 +16,8 @@ default_state = {
     },
     "game_over": False
   }
-    if "upgrades" not in st.session_state:
-        st.session_state.upgrades = []
+if "upgrades" not in st.session_state:
+    st.session_state.upgrades = []
         
 for key, value in default_state.items():
     if key not in st.session_state:
@@ -186,6 +186,7 @@ if uploaded_file is not None:
     st.session_state.credits = loaded_data["credits"]
     st.session_state.strains = loaded_data["strains"]
     st.sidebar.success("Game Loaded!")
+
 
 
 
