@@ -14,6 +14,8 @@ default_state = {
         "Wild Sativa": {"potency": 8, "yield": 3}
     },
     "game_over": False
+    if "upgrades" not in st.session_state:
+    st.session_state.upgrades = []
 }
 
 for key, value in default_state.items():
@@ -59,6 +61,28 @@ st.sidebar.markdown("---")
 st.sidebar.write("### 🌿Strain Catalog")
 st.sidebar.table(st.session_state.strains)
 
+st.sidebar.markdown("---")
+st.sidebar.write("### 🛠️ Equipment Shop")
+
+# Define available upgrades
+shop_items = {
+    "LED Lights": {"cost": 150, "effect": "yield_boost", "desc": "+20% Yield on sales"},
+    "Hydro System": {"cost": 250, "effect": "potency_boost", "desc": "+20% Price on sales"}
+}
+
+for item, data in shop_items.items():
+    if item not in st.session_state.upgrades:
+        if st.sidebar.button(f"Buy {item} (${data['cost']})"):
+            if st.session_state.credits >= data['cost']:
+                st.session_state.credits -= data['cost']
+                st.session_state.upgrades.append(item)
+                st.success(f"Purchased {item}!")
+                st.rerun()
+            else:
+                st.error("Not enough cash!")
+    else:
+        st.sidebar.info(f"✅ {item} Active")
+
 # --- 3. MAIN GAMEPLAY AREA ---
 st.title("Cultivar Labs")
 
@@ -91,6 +115,21 @@ with st.expander("Breed New Strain (Cost: $50)", expanded=True):
 
 # --- SELLING SECTION ---
 st.subheader("🏪 Marketplace")
+if st.button("Sell Batch"):
+    strain = st.session_state.strains[sell_target]
+    
+    # CALCULATE BASE VALUES
+    current_yield = strain['yield']
+    current_price = strain['potency'] * 5
+    
+    # APPLY UPGRADES
+    if "LED Lights" in st.session_state.upgrades:
+        current_yield *= 1.2  # 20% boost
+    if "Hydro System" in st.session_state.upgrades:
+        current_price *= 1.2  # 20% boost
+
+    profit = round(current_price * current_yield, 2)
+    # ... rest of the code
 if st.session_state.sells_left > 0:
     sell_target = st.selectbox("Select Batch to Sell", list(st.session_state.strains.keys()))
     if st.button("Sell Batch"):
@@ -146,6 +185,7 @@ if uploaded_file is not None:
     st.session_state.credits = loaded_data["credits"]
     st.session_state.strains = loaded_data["strains"]
     st.sidebar.success("Game Loaded!")
+
 
 
 
