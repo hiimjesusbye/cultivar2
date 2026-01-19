@@ -2,7 +2,7 @@ import streamlit as st
 import random
 import json
 
-# --- 1. CONFIGURATION ---
+# --- 1. CONFIGURATION & DATA ---
 st.set_page_config(page_title="Cannabis Tycoon", page_icon="🌿", layout="wide")
 
 SHOP_ITEMS = {
@@ -11,7 +11,17 @@ SHOP_ITEMS = {
     "Auto-Trimmer": {"cost": 500, "desc": "Unlocks a 5th Grow Plot"}
 }
 
-POSSIBLE_TERPENES = ["Myrcene", "Limonene", "Caryophyllene", "Pinene", "Linalool", "Humulene"]
+# The Master List of Terpenes and their descriptions
+TERPENE_INFO = {
+    "Myrcene": "Sedative / Relaxing",
+    "Limonene": "Energy / Mood Lift",
+    "Caryophyllene": "Spicy / Anti-Inflammatory",
+    "Pinene": "Piney / Focus",
+    "Linalool": "Floral / Calming",
+    "Humulene": "Earthy / Appetite Suppressant",
+    "Terpinolene": "Fruity / Uplifting",
+    "Ocimene": "Sweet / Decongestant"
+}
 
 # --- 2. STATE MANAGEMENT ---
 default_state = {
@@ -19,11 +29,18 @@ default_state = {
     "season": 1,
     "overhead": 50,
     "breeds_left": 1,
-    "phase": "PLANNING", # New Phase System: PLANNING -> HARVEST -> END
-    "plots_results": [], # Stores data about grown crops
+    "phase": "PLANNING", 
+    "plots_results": [],
+    "discovered_terpenes": ["Myrcene", "Limonene"], # Start knowing these two
     "strains": {
-        "Industrial Hemp": {"potency": 2, "yield": 10, "resistance": 8, "speed": 4, "terpenes": {"Myrcene": 3}},
-        "Wild Sativa": {"potency": 8, "yield": 3, "resistance": 3, "speed": 9, "terpenes": {"Limonene": 7}}
+        "Industrial Hemp": {
+            "potency": 2, "yield": 10, "resistance": 8, "speed": 4, 
+            "terpenes": {"Myrcene": 3} 
+        },
+        "Wild Sativa": {
+            "potency": 8, "yield": 3, "resistance": 3, "speed": 9, 
+            "terpenes": {"Limonene": 7}
+        }
     },
     "upgrades": [],
     "game_over": False
@@ -33,53 +50,73 @@ for key, value in default_state.items():
     if key not in st.session_state:
         st.session_state[key] = value
 
-# --- 3. GAME LOGIC FUNCTIONS ---
+# --- 3. LOGIC FUNCTIONS ---
 
 def mix_terpenes(t1, t2):
-    """Combines two terpene dictionaries for breeding"""
+    """Breeds two terpene profiles and checks for discoveries"""
     new_terps = {}
+    
+    # 1. Inheritance: Combine parents
     all_keys = set(list(t1.keys()) + list(t2.keys()))
     for key in all_keys:
         val1, val2 = t1.get(key, 0), t2.get(key, 0)
-        base = (val1 + val2) / 2 if (val1 > 0 and val2 > 0) else max(val1, val2) * 0.9
-        final_val = round(base + random.uniform(-1, 1), 1)
-        if final_val > 1.0: new_terps[key] = final_val
-    if random.random() < 0.3: # Mutation
-        new_terp = random.choice(POSSIBLE_TERPENES)
-        if new_terp not in new_terps: new_terps[new_terp] = random.randint(1, 5)
+        
+        # Average if both exist, otherwise take one (with slight penalty chance)
+        if val1 > 0 and val2 > 0:
+            base = (val1 + val2) / 2
+        else:
+            base = max(val1, val2) * 0.9
+            
+        # Random fluctuation
+        final_val = round(base + random.uniform(-1.5, 1.5), 1)
+        
+        # Only keep if strength is significant
+        if final_val > 0.5:
+            new_terps[key] = final_val
+
+    # 2. Mutation: Chance to discover a NEW terpene
+    # Higher chance if parents have high chemical complexity (lots of terps)
+    mutation_chance = 0.2 + (len(new_terps) * 0.05)
+    
+    if random.random() < mutation_chance:
+        possible_new = [t for t in TERPENE_INFO.keys() if t not in new_terps]
+        if possible_new:
+            discovered = random.choice(possible_new)
+            strength = random.randint(1, 4)
+            new_terps[discovered] = strength
+            
+            # Check if this is a global discovery for the player
+            if discovered not in st.session_state.discovered_terpenes:
+                st.session_state.discovered_terpenes.append(discovered)
+                st.toast(f"🧪 NEW DISCOVERY: {discovered}!", icon="🎉")
+                
     return new_terps
 
 def run_grow_simulation(plot_assignments):
-    """Calculates the results for all assigned plots"""
     results = []
-    
     for strain_name in plot_assignments:
         stats = st.session_state.strains[strain_name]
         
-        # 1. Base Calcs
-        # Random variance based on strain stats
+        # Yield Variance
         actual_yield = round(stats['yield'] * random.uniform(0.8, 1.2), 2)
         actual_potency = stats['potency']
         
-        # 2. Apply Upgrades
-        if "LED Grow Lights" in st.session_state.upgrades:
-            actual_yield *= 1.2
-        if "Hydroponic System" in st.session_state.upgrades:
-            actual_potency *= 1.2 # Simulating higher quality
+        # Upgrades
+        if "LED Grow Lights" in st.session_state.upgrades: actual_yield *= 1.2
+        if "Hydroponic System" in st.session_state.upgrades: actual_potency *= 1.2
             
-        # 3. Calculate Value
-        # Terpene Bonus
-        terp_bonus = sum(stats['terpenes'].values()) * 0.5
-        price_per_unit = (actual_potency * 5) + terp_bonus
+        # Terpene Value Calc: Sum of all terpene strengths * 0.5
+        terp_value = sum(stats['terpenes'].values()) * 0.5
+        
+        price_per_unit = (actual_potency * 5) + terp_value
         total_value = round(actual_yield * price_per_unit, 2)
         
         results.append({
             "strain": strain_name,
             "yield": round(actual_yield, 2),
             "value": total_value,
-            "desc": "Healthy Harvest" # Placeholder for future random events
+            "terp_bonus": round(terp_value, 2)
         })
-        
     return results
 
 def reset_season():
@@ -123,33 +160,52 @@ with st.sidebar.expander("🛠️ Shop"):
                     st.rerun()
 
 st.sidebar.markdown("---")
-st.sidebar.caption("Grow Log")
-st.sidebar.dataframe([{"Strain": k, "Potency": v['potency'], "Yield": v['yield']} for k,v in st.session_state.strains.items()], use_container_width=True)
+st.sidebar.caption("Strain Library")
+# Simplified Table
+st.sidebar.dataframe(
+    [{"Name": k, "Pot": v['potency'], "Yld": v['yield']} for k,v in st.session_state.strains.items()],
+    use_container_width=True, hide_index=True
+)
 
+# === NEW SECTION: TERPENE LIBRARY ===
+st.sidebar.markdown("---")
+st.sidebar.subheader(f"🧪 Terpene Research ({len(st.session_state.discovered_terpenes)}/{len(TERPENE_INFO)})")
+for t_name in st.session_state.discovered_terpenes:
+    desc = TERPENE_INFO.get(t_name, "Unknown Effect")
+    st.sidebar.markdown(f"**{t_name}**: _{desc}_")
 
-# --- 5. MAIN GAME AREA ---
+# --- 5. MAIN UI ---
 st.title("Cannabis Tycoon: Farm Manager")
 
-# === PHASE 1: BREEDING (Always visible during Planning) ===
+# === BREEDING ===
 if st.session_state.phase == "PLANNING":
-    with st.expander("🧬 Genetics Lab (Breed New Strain - $50)", expanded=False):
+    with st.expander("🧬 Genetics Lab (Breed - $50)", expanded=False):
         if st.session_state.breeds_left > 0:
             c1, c2 = st.columns(2)
             p1 = c1.selectbox("Parent 1", list(st.session_state.strains.keys()))
             p2 = c2.selectbox("Parent 2", list(st.session_state.strains.keys()))
             new_name = st.text_input("New Name:")
+            
+            # Show Parent Stats for comparison
+            if p1 and p2:
+                s1, s2 = st.session_state.strains[p1], st.session_state.strains[p2]
+                st.caption(f"Parent 1 Terpenes: {', '.join(s1['terpenes'].keys())}")
+                st.caption(f"Parent 2 Terpenes: {', '.join(s2['terpenes'].keys())}")
+
             if st.button("Breed"):
                 if new_name and st.session_state.credits >= 50:
                     st.session_state.credits -= 50
                     st.session_state.breeds_left -= 1
+                    
                     s1, s2 = st.session_state.strains[p1], st.session_state.strains[p2]
+                    new_terps = mix_terpenes(s1['terpenes'], s2['terpenes'])
                     
                     new_stats = {
                         "potency": round((s1['potency']+s2['potency'])/2 + random.uniform(-1,2),1),
                         "yield": round((s1['yield']+s2['yield'])/2 + random.uniform(-1,2),1),
                         "resistance": round((s1['resistance']+s2['resistance'])/2, 1),
                         "speed": round((s1['speed']+s2['speed'])/2, 1),
-                        "terpenes": mix_terpenes(s1['terpenes'], s2['terpenes'])
+                        "terpenes": new_terps
                     }
                     st.session_state.strains[new_name] = new_stats
                     st.success(f"Bred {new_name}!")
@@ -159,63 +215,55 @@ if st.session_state.phase == "PLANNING":
         else:
             st.info("Breeding finished for this season.")
 
-# === PHASE 2: PLOT MANAGEMENT ===
+# === PLOTS ===
 st.divider()
 st.subheader("🚜 Grow Operations")
-
-# Determine number of plots (4 base + 1 if upgrade)
 num_plots = 5 if "Auto-Trimmer" in st.session_state.upgrades else 4
 cols = st.columns(num_plots)
 
 if st.session_state.phase == "PLANNING":
-    st.info(f"Select strains for your {num_plots} plots. High Resistance strains are safer!")
-    
-    # Create a list to capture user choices
     selected_strains = []
-    
     for i, col in enumerate(cols):
         with col:
             st.markdown(f"**Plot {i+1}**")
-            # Default to first strain to avoid empty errors
-            choice = st.selectbox(f"Strain", list(st.session_state.strains.keys()), key=f"plot_{i}")
+            choice = st.selectbox("Select", list(st.session_state.strains.keys()), key=f"p_{i}")
             selected_strains.append(choice)
             
-            # Show quick stats for selection
-            stats = st.session_state.strains[choice]
-            st.caption(f"Pot: {stats['potency']} | Yld: {stats['yield']}")
+            # Show Terpene Profile in Planning
+            t_profile = st.session_state.strains[choice]['terpenes']
+            if t_profile:
+                # Format: "Myrcene (3.0)"
+                t_str = ", ".join([f"{k} ({v})" for k,v in t_profile.items()])
+                st.caption(f"🧬 {t_str}")
+            else:
+                st.caption("No Terpenes")
 
     st.markdown("---")
     if st.button("🌱 START GROW SEASON", type="primary"):
-        # Run the simulation
         results = run_grow_simulation(selected_strains)
         st.session_state.plots_results = results
         st.session_state.phase = "HARVEST"
         st.rerun()
 
 elif st.session_state.phase == "HARVEST":
-    st.success("Harvest Complete! Review your yields below.")
+    st.success("Harvest Ready!")
+    total_val = 0
     
-    total_season_value = 0
-    
-    # Display Results in Cards
     for i, col in enumerate(cols):
-        # Handle case where user might have fewer results if they just upgraded (safety check)
         if i < len(st.session_state.plots_results):
             res = st.session_state.plots_results[i]
-            total_season_value += res['value']
-            
+            total_val += res['value']
             with col:
                 st.markdown(f"### Plot {i+1}")
                 st.info(f"**{res['strain']}**")
                 st.metric("Yield", f"{res['yield']} oz")
                 st.metric("Value", f"${res['value']}")
-                st.caption(res['desc'])
+                if res['terp_bonus'] > 0:
+                    st.caption(f"🌟 +${res['terp_bonus']} from Terpenes")
 
     st.markdown("---")
-    st.subheader(f"Total Harvest Value: ${round(total_season_value, 2)}")
-    
-    # The Big Payoff Button
-    if st.button("💰 SELL HARVEST & PAY RENT", type="primary"):
-        st.session_state.credits += total_season_value
+    st.subheader(f"Total: ${round(total_val, 2)}")
+    if st.button("💰 SELL & PAY RENT", type="primary"):
+        st.session_state.credits += total_val
         reset_season()
         st.rerun()
