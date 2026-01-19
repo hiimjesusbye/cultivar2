@@ -14,9 +14,10 @@ default_state = {
         "Wild Sativa": {"potency": 8, "yield": 3}
         
     },
-    "game_over": False
     if "upgrades" not in st.session_state:
-    st.session_state.upgrades = []
+        st.session_state.upgrades = []
+    "game_over": False
+  
 }
 
 for key, value in default_state.items():
@@ -186,6 +187,7 @@ if uploaded_file is not None:
     st.session_state.credits = loaded_data["credits"]
     st.session_state.strains = loaded_data["strains"]
     st.sidebar.success("Game Loaded!")
+
 
 
 
