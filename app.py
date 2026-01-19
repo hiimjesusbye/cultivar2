@@ -1,4 +1,5 @@
 import streamlit as st
+import json
 import random
 
 # 1. Setup Persistent Data (This keeps your money from resetting on every click)
@@ -45,4 +46,34 @@ if st.button("Sell Harvest"):
     profit = round((strain['potency'] * 5) * strain['yield'], 2)
     st.session_state.credits += profit
     st.balloons()  # Visual celebration!
+
     st.info(f"Sold for ${profit}")
+
+
+# 5. Save and Load Functionality
+st.sidebar.markdown("---")
+st.sidebar.write("### 💾 Game Data")
+
+# --- SAVE GAME ---
+# We convert the current game state into a string
+game_data = {
+    "credits": st.session_state.credits,
+    "strains": st.session_state.strains
+}
+save_string = json.dumps(game_data)
+
+st.sidebar.download_button(
+    label="Download Save File",
+    data=save_string,
+    file_name="breeding_save.json",
+    mime="application/json"
+)
+
+# --- LOAD GAME ---
+uploaded_file = st.sidebar.file_uploader("Upload Save File", type="json")
+if uploaded_file is not None:
+    loaded_data = json.load(uploaded_file)
+    # Update the game state with the loaded data
+    st.session_state.credits = loaded_data["credits"]
+    st.session_state.strains = loaded_data["strains"]
+    st.sidebar.success("Game Loaded!")
