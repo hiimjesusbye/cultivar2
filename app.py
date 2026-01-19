@@ -56,7 +56,7 @@ st.sidebar.write(f"🧬 Breeds Left: **{st.session_state.breeds_left}**")
 st.sidebar.write(f"💰 Sells Left: **{st.session_state.sells_left}**")
 
 st.sidebar.markdown("---")
-st.sidebar.write("### 🌿 Stash")
+st.sidebar.write("### 🌿Strain Catalog")
 st.sidebar.table(st.session_state.strains)
 
 # --- 3. MAIN GAMEPLAY AREA ---
@@ -146,5 +146,6 @@ if uploaded_file is not None:
     st.session_state.credits = loaded_data["credits"]
     st.session_state.strains = loaded_data["strains"]
     st.sidebar.success("Game Loaded!")
+
 
 
