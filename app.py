@@ -1,9 +1,10 @@
 import streamlit as st
 import random
 import json
+import time  # NEW: For the progress bar delay
 
 # --- 1. CONFIGURATION & DATA ---
-st.set_page_config(page_title="Cannabis Tycoon", page_icon="🌿", layout="wide")
+st.set_page_config(page_title="Cannabis Tycoon: Hard Mode", page_icon="🌿", layout="wide")
 
 SHOP_ITEMS = {
     "LED Grow Lights": {"cost": 200, "desc": "+20% Yield on all harvests"},
@@ -11,7 +12,6 @@ SHOP_ITEMS = {
     "Auto-Trimmer": {"cost": 500, "desc": "Unlocks a 5th Grow Plot"}
 }
 
-# The Master List of Terpenes and their descriptions
 TERPENE_INFO = {
     "Myrcene": "Sedative / Relaxing",
     "Limonene": "Energy / Mood Lift",
@@ -28,10 +28,11 @@ default_state = {
     "credits": 100,
     "season": 1,
     "overhead": 50,
+    "breed_cost": 50, # NEW: Tracks the rising cost of breeding
     "breeds_left": 1,
     "phase": "PLANNING", 
     "plots_results": [],
-    "discovered_terpenes": ["Myrcene", "Limonene"], # Start knowing these two
+    "discovered_terpenes": ["Myrcene", "Limonene"],
     "strains": {
         "Industrial Hemp": {
             "potency": 2, "yield": 10, "resistance": 8, "speed": 4, 
@@ -55,41 +56,23 @@ for key, value in default_state.items():
 def mix_terpenes(t1, t2):
     """Breeds two terpene profiles and checks for discoveries"""
     new_terps = {}
-    
-    # 1. Inheritance: Combine parents
     all_keys = set(list(t1.keys()) + list(t2.keys()))
     for key in all_keys:
         val1, val2 = t1.get(key, 0), t2.get(key, 0)
-        
-        # Average if both exist, otherwise take one (with slight penalty chance)
-        if val1 > 0 and val2 > 0:
-            base = (val1 + val2) / 2
-        else:
-            base = max(val1, val2) * 0.9
-            
-        # Random fluctuation
+        base = (val1 + val2) / 2 if (val1 > 0 and val2 > 0) else max(val1, val2) * 0.9
         final_val = round(base + random.uniform(-1.5, 1.5), 1)
-        
-        # Only keep if strength is significant
-        if final_val > 0.5:
-            new_terps[key] = final_val
+        if final_val > 0.5: new_terps[key] = final_val
 
-    # 2. Mutation: Chance to discover a NEW terpene
-    # Higher chance if parents have high chemical complexity (lots of terps)
+    # Mutation Chance
     mutation_chance = 0.2 + (len(new_terps) * 0.05)
-    
     if random.random() < mutation_chance:
         possible_new = [t for t in TERPENE_INFO.keys() if t not in new_terps]
         if possible_new:
             discovered = random.choice(possible_new)
-            strength = random.randint(1, 4)
-            new_terps[discovered] = strength
-            
-            # Check if this is a global discovery for the player
+            new_terps[discovered] = random.randint(1, 4)
             if discovered not in st.session_state.discovered_terpenes:
                 st.session_state.discovered_terpenes.append(discovered)
                 st.toast(f"🧪 NEW DISCOVERY: {discovered}!", icon="🎉")
-                
     return new_terps
 
 def run_grow_simulation(plot_assignments):
@@ -97,7 +80,7 @@ def run_grow_simulation(plot_assignments):
     for strain_name in plot_assignments:
         stats = st.session_state.strains[strain_name]
         
-        # Yield Variance
+        # Variance
         actual_yield = round(stats['yield'] * random.uniform(0.8, 1.2), 2)
         actual_potency = stats['potency']
         
@@ -105,9 +88,7 @@ def run_grow_simulation(plot_assignments):
         if "LED Grow Lights" in st.session_state.upgrades: actual_yield *= 1.2
         if "Hydroponic System" in st.session_state.upgrades: actual_potency *= 1.2
             
-        # Terpene Value Calc: Sum of all terpene strengths * 0.5
         terp_value = sum(stats['terpenes'].values()) * 0.5
-        
         price_per_unit = (actual_potency * 5) + terp_value
         total_value = round(actual_yield * price_per_unit, 2)
         
@@ -124,7 +105,10 @@ def reset_season():
     if st.session_state.credits >= cost:
         st.session_state.credits -= cost
         st.session_state.season += 1
-        st.session_state.overhead += 50
+        
+        # HARD MODE: Expenses Double
+        st.session_state.overhead *= 2 
+        
         st.session_state.breeds_left = 1
         st.session_state.phase = "PLANNING"
         st.session_state.plots_results = []
@@ -146,8 +130,10 @@ col1, col2 = st.sidebar.columns(2)
 col1.metric("Bank", f"${round(st.session_state.credits, 2)}")
 col2.metric("Overhead", f"-${st.session_state.overhead}", delta_color="inverse")
 
-# Shop
 st.sidebar.markdown("---")
+# Show current breeding cost in sidebar since it changes
+st.sidebar.metric("Current Breeding Cost", f"${st.session_state.breed_cost}")
+
 with st.sidebar.expander("🛠️ Shop"):
     for item, data in SHOP_ITEMS.items():
         if item in st.session_state.upgrades:
@@ -161,45 +147,40 @@ with st.sidebar.expander("🛠️ Shop"):
 
 st.sidebar.markdown("---")
 st.sidebar.caption("Strain Library")
-# Simplified Table
 st.sidebar.dataframe(
     [{"Name": k, "Pot": v['potency'], "Yld": v['yield']} for k,v in st.session_state.strains.items()],
     use_container_width=True, hide_index=True
 )
 
-# === NEW SECTION: TERPENE LIBRARY ===
 st.sidebar.markdown("---")
-st.sidebar.subheader(f"🧪 Terpene Research ({len(st.session_state.discovered_terpenes)}/{len(TERPENE_INFO)})")
+st.sidebar.subheader(f"🧪 Terpenes ({len(st.session_state.discovered_terpenes)}/{len(TERPENE_INFO)})")
 for t_name in st.session_state.discovered_terpenes:
     desc = TERPENE_INFO.get(t_name, "Unknown Effect")
     st.sidebar.markdown(f"**{t_name}**: _{desc}_")
 
 # --- 5. MAIN UI ---
-st.title("Cannabis Tycoon: Farm Manager")
+st.title("Cannabis Tycoon: Hard Mode")
 
 # === BREEDING ===
 if st.session_state.phase == "PLANNING":
-    with st.expander("🧬 Genetics Lab (Breed - $50)", expanded=False):
+    cost = st.session_state.breed_cost
+    with st.expander(f"🧬 Genetics Lab (Breed - ${cost})", expanded=False):
         if st.session_state.breeds_left > 0:
             c1, c2 = st.columns(2)
             p1 = c1.selectbox("Parent 1", list(st.session_state.strains.keys()))
             p2 = c2.selectbox("Parent 2", list(st.session_state.strains.keys()))
             new_name = st.text_input("New Name:")
             
-            # Show Parent Stats for comparison
-            if p1 and p2:
-                s1, s2 = st.session_state.strains[p1], st.session_state.strains[p2]
-                st.caption(f"Parent 1 Terpenes: {', '.join(s1['terpenes'].keys())}")
-                st.caption(f"Parent 2 Terpenes: {', '.join(s2['terpenes'].keys())}")
-
-            if st.button("Breed"):
-                if new_name and st.session_state.credits >= 50:
-                    st.session_state.credits -= 50
+            if st.button(f"Breed Strain (${cost})"):
+                if new_name and st.session_state.credits >= cost:
+                    st.session_state.credits -= cost
                     st.session_state.breeds_left -= 1
+                    
+                    # HARD MODE: Breeding cost increases
+                    st.session_state.breed_cost += 50 
                     
                     s1, s2 = st.session_state.strains[p1], st.session_state.strains[p2]
                     new_terps = mix_terpenes(s1['terpenes'], s2['terpenes'])
-                    
                     new_stats = {
                         "potency": round((s1['potency']+s2['potency'])/2 + random.uniform(-1,2),1),
                         "yield": round((s1['yield']+s2['yield'])/2 + random.uniform(-1,2),1),
@@ -210,8 +191,8 @@ if st.session_state.phase == "PLANNING":
                     st.session_state.strains[new_name] = new_stats
                     st.success(f"Bred {new_name}!")
                     st.rerun()
-                elif st.session_state.credits < 50:
-                    st.error("Need $50!")
+                elif st.session_state.credits < cost:
+                    st.error(f"Need ${cost}!")
         else:
             st.info("Breeding finished for this season.")
 
@@ -228,18 +209,26 @@ if st.session_state.phase == "PLANNING":
             st.markdown(f"**Plot {i+1}**")
             choice = st.selectbox("Select", list(st.session_state.strains.keys()), key=f"p_{i}")
             selected_strains.append(choice)
-            
-            # Show Terpene Profile in Planning
             t_profile = st.session_state.strains[choice]['terpenes']
-            if t_profile:
-                # Format: "Myrcene (3.0)"
-                t_str = ", ".join([f"{k} ({v})" for k,v in t_profile.items()])
-                st.caption(f"🧬 {t_str}")
-            else:
-                st.caption("No Terpenes")
+            t_str = ", ".join([f"{k} ({v})" for k,v in t_profile.items()]) if t_profile else "None"
+            st.caption(f"🧬 {t_str}")
 
     st.markdown("---")
+    
+    # THE GROW BUTTON WITH PROGRESS BAR
     if st.button("🌱 START GROW SEASON", type="primary"):
+        # 1. Create the progress bar
+        progress_text = "Plants are growing... checking humidity... trimming leaves..."
+        my_bar = st.progress(0, text=progress_text)
+
+        # 2. Increment the bar over time (simulates 5 seconds total)
+        for percent_complete in range(100):
+            time.sleep(0.05) # 0.05s * 100 = 5 seconds total
+            my_bar.progress(percent_complete + 1, text=progress_text)
+            
+        # 3. Clear bar and proceed
+        my_bar.empty()
+        
         results = run_grow_simulation(selected_strains)
         st.session_state.plots_results = results
         st.session_state.phase = "HARVEST"
