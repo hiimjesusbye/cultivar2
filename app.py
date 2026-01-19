@@ -1,7 +1,7 @@
 import streamlit as st
 import random
 import json
-import time  # NEW: For the progress bar delay
+import time
 
 # --- 1. CONFIGURATION & DATA ---
 st.set_page_config(page_title="Cannabis Tycoon: Hard Mode", page_icon="🌿", layout="wide")
@@ -28,7 +28,7 @@ default_state = {
     "credits": 100,
     "season": 1,
     "overhead": 50,
-    "breed_cost": 50, # NEW: Tracks the rising cost of breeding
+    "breed_cost": 50,
     "breeds_left": 1,
     "phase": "PLANNING", 
     "plots_results": [],
@@ -100,15 +100,15 @@ def run_grow_simulation(plot_assignments):
         })
     return results
 
-def reset_season():
+def reset_season(profit):
+    # Credits update happens inside the button now, this just handles season reset
     cost = st.session_state.overhead
+    
+    # Check if they can afford expenses (Profit is already added to credits before this check)
     if st.session_state.credits >= cost:
         st.session_state.credits -= cost
         st.session_state.season += 1
-        
-        # HARD MODE: Expenses Double
-        st.session_state.overhead *= 2 
-        
+        st.session_state.overhead *= 2 # HARD MODE: Expenses Double
         st.session_state.breeds_left = 1
         st.session_state.phase = "PLANNING"
         st.session_state.plots_results = []
@@ -131,7 +131,6 @@ col1.metric("Bank", f"${round(st.session_state.credits, 2)}")
 col2.metric("Overhead", f"-${st.session_state.overhead}", delta_color="inverse")
 
 st.sidebar.markdown("---")
-# Show current breeding cost in sidebar since it changes
 st.sidebar.metric("Current Breeding Cost", f"${st.session_state.breed_cost}")
 
 with st.sidebar.expander("🛠️ Shop"):
@@ -147,9 +146,23 @@ with st.sidebar.expander("🛠️ Shop"):
 
 st.sidebar.markdown("---")
 st.sidebar.caption("Strain Library")
+
+# PREPARE DATA FOR SIDEBAR TABLE
+library_data = []
+for name, data in st.session_state.strains.items():
+    # Format terpenes into a readable string
+    t_str = ", ".join([f"{k}({v})" for k,v in data['terpenes'].items()]) if data['terpenes'] else "-"
+    library_data.append({
+        "Name": name,
+        "Pot": data['potency'],
+        "Yld": data['yield'],
+        "Terps": t_str
+    })
+
 st.sidebar.dataframe(
-    [{"Name": k, "Pot": v['potency'], "Yld": v['yield']} for k,v in st.session_state.strains.items()],
-    use_container_width=True, hide_index=True
+    library_data,
+    use_container_width=True, 
+    hide_index=True
 )
 
 st.sidebar.markdown("---")
@@ -175,8 +188,6 @@ if st.session_state.phase == "PLANNING":
                 if new_name and st.session_state.credits >= cost:
                     st.session_state.credits -= cost
                     st.session_state.breeds_left -= 1
-                    
-                    # HARD MODE: Breeding cost increases
                     st.session_state.breed_cost += 50 
                     
                     s1, s2 = st.session_state.strains[p1], st.session_state.strains[p2]
@@ -209,24 +220,26 @@ if st.session_state.phase == "PLANNING":
             st.markdown(f"**Plot {i+1}**")
             choice = st.selectbox("Select", list(st.session_state.strains.keys()), key=f"p_{i}")
             selected_strains.append(choice)
-            t_profile = st.session_state.strains[choice]['terpenes']
-            t_str = ", ".join([f"{k} ({v})" for k,v in t_profile.items()]) if t_profile else "None"
+            
+            # SHOW FULL STATS UNDER PLOT
+            s_data = st.session_state.strains[choice]
+            t_profile = s_data['terpenes']
+            t_str = ", ".join([f"{k}({v})" for k,v in t_profile.items()]) if t_profile else "None"
+            
+            st.caption(f"**Potency:** {s_data['potency']} | **Yield:** {s_data['yield']}")
             st.caption(f"🧬 {t_str}")
 
     st.markdown("---")
     
-    # THE GROW BUTTON WITH PROGRESS BAR
     if st.button("🌱 START GROW SEASON", type="primary"):
-        # 1. Create the progress bar
+        # Progress Bar Simulation
         progress_text = "Plants are growing... checking humidity... trimming leaves..."
         my_bar = st.progress(0, text=progress_text)
 
-        # 2. Increment the bar over time (simulates 5 seconds total)
         for percent_complete in range(100):
-            time.sleep(0.05) # 0.05s * 100 = 5 seconds total
+            time.sleep(0.04) 
             my_bar.progress(percent_complete + 1, text=progress_text)
             
-        # 3. Clear bar and proceed
         my_bar.empty()
         
         results = run_grow_simulation(selected_strains)
@@ -238,6 +251,7 @@ elif st.session_state.phase == "HARVEST":
     st.success("Harvest Ready!")
     total_val = 0
     
+    # Display Plot Results
     for i, col in enumerate(cols):
         if i < len(st.session_state.plots_results):
             res = st.session_state.plots_results[i]
@@ -250,9 +264,19 @@ elif st.session_state.phase == "HARVEST":
                 if res['terp_bonus'] > 0:
                     st.caption(f"🌟 +${res['terp_bonus']} from Terpenes")
 
+    # FINANCIAL SUMMARY SECTION
     st.markdown("---")
-    st.subheader(f"Total: ${round(total_val, 2)}")
-    if st.button("💰 SELL & PAY RENT", type="primary"):
+    st.subheader("📊 Season Financials")
+    
+    overhead = st.session_state.overhead
+    net_profit = total_val - overhead
+    
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Gross Harvest", f"${total_val:.2f}")
+    m2.metric("Season Expenses", f"-${overhead:.2f}", delta_color="inverse")
+    m3.metric("Net Earnings", f"${net_profit:.2f}", delta=round(net_profit, 2))
+    
+    if st.button("💰 FINALIZE SEASON", type="primary"):
         st.session_state.credits += total_val
-        reset_season()
+        reset_season(total_val)
         st.rerun()
