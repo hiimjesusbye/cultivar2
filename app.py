@@ -60,7 +60,7 @@ st.sidebar.write("### 🌿 Stash")
 st.sidebar.table(st.session_state.strains)
 
 # --- 3. MAIN GAMEPLAY AREA ---
-st.title("Cannabis Tycoon: Text Edition")
+st.title("Cultivar Labs")
 
 # --- BREEDING SECTION ---
 st.subheader("🧬 Genetics Lab")
@@ -146,4 +146,5 @@ if uploaded_file is not None:
     st.session_state.credits = loaded_data["credits"]
     st.session_state.strains = loaded_data["strains"]
     st.sidebar.success("Game Loaded!")
+
 
