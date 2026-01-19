@@ -1,198 +1,184 @@
 import streamlit as st
-import json
 import random
+import json
 
-# --- 1. INITIALIZE GAME STATE ---
+# --- 1. CONFIGURATION & STATE INITIALIZATION ---
+st.set_page_config(page_title="Cannabis Tycoon", page_icon="🌿")
+
+# Define available shop items and their effects
+SHOP_ITEMS = {
+    "LED Grow Lights": {"cost": 200, "desc": "+20% Yield on all harvests"},
+    "Hydroponic System": {"cost": 300, "desc": "+20% Sale Price (Potency boost)"},
+    "Auto-Trimmer": {"cost": 500, "desc": "+1 Extra Sell Action per season"}
+}
+
 default_state = {
     "credits": 100,
     "season": 1,
     "overhead": 50,
     "breeds_left": 1,
     "sells_left": 4,
+    "sell_limit": 4, # Base limit, can be upgraded
     "strains": {
         "Industrial Hemp": {"potency": 2, "yield": 10},
         "Wild Sativa": {"potency": 8, "yield": 3}
-        
     },
+    "upgrades": [],
     "game_over": False
-  }
- 
+}
+
+# Load defaults if not present
 for key, value in default_state.items():
     if key not in st.session_state:
         st.session_state[key] = value
-    if "upgrades" not in st.session_state:
-        st.session_state.upgrades = []
 
-# Helper function to reset actions for next season
+# --- 2. HELPER FUNCTIONS ---
+
+def calculate_profit(strain_data):
+    """Calculates sell value based on stats and active upgrades."""
+    # Base Values
+    c_yield = strain_data['yield']
+    c_price = strain_data['potency'] * 5
+    
+    # Apply Upgrades
+    if "LED Grow Lights" in st.session_state.upgrades:
+        c_yield *= 1.2
+    if "Hydroponic System" in st.session_state.upgrades:
+        c_price *= 1.2
+        
+    return round(c_price * c_yield, 2)
+
 def advance_season():
     cost = st.session_state.overhead
     if st.session_state.credits >= cost:
         st.session_state.credits -= cost
         st.session_state.season += 1
-        st.session_state.overhead += 50  # Increases by $50 each season
+        st.session_state.overhead += 50
+        
         # Reset Actions
         st.session_state.breeds_left = 1
-        st.session_state.sells_left = 4
+        # Check for Auto-Trimmer upgrade for extra sell slot
+        base_sells = 5 if "Auto-Trimmer" in st.session_state.upgrades else 4
+        st.session_state.sells_left = base_sells
+        st.session_state.sell_limit = base_sells
+        
         st.success(f"Expenses paid! Welcome to Season {st.session_state.season}.")
     else:
         st.session_state.game_over = True
 
-# --- 2. SIDEBAR DASHBOARD ---
+# --- 3. SIDEBAR DASHBOARD ---
 st.sidebar.title(f"🍂 Season {st.session_state.season}")
 
+# GAME OVER CHECK
 if st.session_state.game_over:
-    st.error("GAME OVER: You went bankrupt!")
+    st.error("GAME OVER: Bankrupt!")
     if st.sidebar.button("Restart Game"):
-        for key in st.session_state.keys():
-            del st.session_state[key]
+        st.session_state.clear()
         st.rerun()
-    st.stop() # Stops the rest of the app from running
+    st.stop()
 
-# Stats Display
+# Stats
 col1, col2 = st.sidebar.columns(2)
-col1.metric("Bank", f"${st.session_state.credits}")
-col2.metric("Due End of Season", f"-${st.session_state.overhead}", delta_color="inverse")
+col1.metric("Bank", f"${round(st.session_state.credits, 2)}")
+col2.metric("Due Soon", f"-${st.session_state.overhead}", delta_color="inverse")
 
-st.sidebar.markdown("### ⏳ Season Quota")
-st.sidebar.progress((5 - (st.session_state.breeds_left + st.session_state.sells_left)) / 5)
-st.sidebar.write(f"🧬 Breeds Left: **{st.session_state.breeds_left}**")
-st.sidebar.write(f"💰 Sells Left: **{st.session_state.sells_left}**")
+# Quotas
+st.sidebar.markdown("### ⏳ Actions")
+total_actions = 1 + st.session_state.sell_limit
+used_actions = total_actions - (st.session_state.breeds_left + st.session_state.sells_left)
+st.sidebar.progress(used_actions / total_actions)
+st.sidebar.write(f"🧬 Breeds: **{st.session_state.breeds_left}**")
+st.sidebar.write(f"💰 Sells: **{st.session_state.sells_left}**")
 
+# SHOP SECTION (NEW)
 st.sidebar.markdown("---")
-st.sidebar.write("### 🌿Strain Catalog")
-st.sidebar.table(st.session_state.strains)
-
-st.sidebar.markdown("---")
-st.sidebar.write("### 🛠️ Equipment Shop")
-
-# Define available upgrades
-shop_items = {
-    "LED Lights": {"cost": 150, "effect": "yield_boost", "desc": "+20% Yield on sales"},
-    "Hydro System": {"cost": 250, "effect": "potency_boost", "desc": "+20% Price on sales"}
-}
-
-for item, data in shop_items.items():
-    if item not in st.session_state.upgrades:
+st.sidebar.write("### 🛠️ Upgrades")
+for item, data in SHOP_ITEMS.items():
+    if item in st.session_state.upgrades:
+        st.sidebar.info(f"✅ {item}")
+    else:
         if st.sidebar.button(f"Buy {item} (${data['cost']})"):
             if st.session_state.credits >= data['cost']:
                 st.session_state.credits -= data['cost']
                 st.session_state.upgrades.append(item)
-                st.success(f"Purchased {item}!")
+                st.success(f"Bought {item}!")
                 st.rerun()
             else:
-                st.error("Not enough cash!")
-    else:
-        st.sidebar.info(f"✅ {item} Active")
+                st.sidebar.error("Need Cash!")
+        st.sidebar.caption(data['desc'])
 
-# --- 3. MAIN GAMEPLAY AREA ---
-st.title("Cultivar Labs")
+# STASH & SAVE
+st.sidebar.markdown("---")
+st.sidebar.write("### 🌿 Stash")
+st.sidebar.table(st.session_state.strains)
 
-# --- BREEDING SECTION ---
+with st.sidebar.expander("💾 Save / Load"):
+    # Save
+    game_data = {k:v for k,v in st.session_state.items() if k != "game_over"} 
+    # (We exclude UI-specific keys usually, but dumping session_state is fine for this scale)
+    st.download_button("Download Save", json.dumps(game_data), "save.json", "application/json")
+    
+    # Load
+    uploaded_file = st.file_uploader("Upload Save", type="json")
+    if uploaded_file:
+        data = json.load(uploaded_file)
+        for k, v in data.items():
+            st.session_state[k] = v
+        st.success("Loaded!")
+        st.rerun()
+
+# --- 4. MAIN GAME AREA ---
+st.title("Cannabis Tycoon: Text Edition")
+
+# Breeding
 st.subheader("🧬 Genetics Lab")
 with st.expander("Breed New Strain (Cost: $50)", expanded=True):
     if st.session_state.breeds_left > 0:
         c1, c2 = st.columns(2)
-        p1 = c1.selectbox("Parent 1", list(st.session_state.strains.keys()), key="p1")
-        p2 = c2.selectbox("Parent 2", list(st.session_state.strains.keys()), key="p2")
-        new_name = st.text_input("Name New Strain:")
+        p1 = c1.selectbox("Parent 1", list(st.session_state.strains.keys()))
+        p2 = c2.selectbox("Parent 2", list(st.session_state.strains.keys()))
+        new_name = st.text_input("New Strain Name:")
         
-        if st.button("Breed Strain ($50)"):
-            if st.session_state.credits >= 50:
+        if st.button("Breed ($50)"):
+            if not new_name:
+                st.error("Please name your strain.")
+            elif st.session_state.credits >= 50:
                 st.session_state.credits -= 50
                 st.session_state.breeds_left -= 1
                 
-                # Math Logic
                 s1, s2 = st.session_state.strains[p1], st.session_state.strains[p2]
                 new_potency = round((s1['potency'] + s2['potency']) / 2 + random.uniform(-1, 2), 1)
                 new_yield = round((s1['yield'] + s2['yield']) / 2 + random.uniform(-1, 2), 1)
                 
                 st.session_state.strains[new_name] = {"potency": max(1, new_potency), "yield": max(1, new_yield)}
+                st.balloons()
                 st.success(f"Created {new_name}!")
                 st.rerun()
             else:
                 st.error("Not enough cash!")
     else:
-        st.info("⚠️ No breeding slots left this season.")
+        st.info("⚠️ Breeding slot used for this season.")
 
-# --- SELLING SECTION ---
+# Selling
 st.subheader("🏪 Marketplace")
-if st.button("Sell Batch"):
-    strain = st.session_state.strains[sell_target]
-    
-    # CALCULATE BASE VALUES
-    current_yield = strain['yield']
-    current_price = strain['potency'] * 5
-    
-    # APPLY UPGRADES
-    if "LED Lights" in st.session_state.upgrades:
-        current_yield *= 1.2  # 20% boost
-    if "Hydro System" in st.session_state.upgrades:
-        current_price *= 1.2  # 20% boost
-
-    profit = round(current_price * current_yield, 2)
-    # ... rest of the code
 if st.session_state.sells_left > 0:
     sell_target = st.selectbox("Select Batch to Sell", list(st.session_state.strains.keys()))
+    
+    # Show estimated profit before clicking
+    est_profit = calculate_profit(st.session_state.strains[sell_target])
+    st.caption(f"Estimated Value: ${est_profit}")
+    
     if st.button("Sell Batch"):
-        strain = st.session_state.strains[sell_target]
-        profit = round((strain['potency'] * 5) * strain['yield'], 2)
-        
+        profit = calculate_profit(st.session_state.strains[sell_target])
         st.session_state.credits += profit
         st.session_state.sells_left -= 1
-        st.balloons()
         st.success(f"Sold for ${profit}")
         st.rerun()
 else:
-    st.info("⚠️ You have sold your maximum batches for this season.")
+    st.info("⚠️ All sell slots used for this season.")
 
-# --- END SEASON ---
+# End Season
 st.markdown("---")
-if st.session_state.breeds_left == 0 and st.session_state.sells_left == 0:
-    st.warning("SEASON COMPLETE: All actions used.")
-    if st.button(f"Pay ${st.session_state.overhead} & Start Season {st.session_state.season + 1}"):
-        advance_season()
-        st.rerun()
-else:
-    # Optional: Allow early advance if they want to skip remaining actions
-    if st.button(f"End Season Early (Pay ${st.session_state.overhead})"):
-        advance_season()
-        st.rerun()
-
-
-# 5. Save and Load Functionality
-st.sidebar.markdown("---")
-st.sidebar.write("### 💾 Game Data")
-
-# --- SAVE GAME ---
-# We convert the current game state into a string
-game_data = {
-    "credits": st.session_state.credits,
-    "strains": st.session_state.strains
-}
-save_string = json.dumps(game_data)
-
-st.sidebar.download_button(
-    label="Download Save File",
-    data=save_string,
-    file_name="breeding_save.json",
-    mime="application/json"
-)
-
-# --- LOAD GAME ---
-uploaded_file = st.sidebar.file_uploader("Upload Save File", type="json")
-if uploaded_file is not None:
-    loaded_data = json.load(uploaded_file)
-    # Update the game state with the loaded data
-    st.session_state.credits = loaded_data["credits"]
-    st.session_state.strains = loaded_data["strains"]
-    st.sidebar.success("Game Loaded!")
-
-
-
-
-
-
-
-
-
-
+if st.button(f"Pay Overhead (${st.session_state.overhead}) & Next Season"):
+    advance_season()
+    st.rerun()
