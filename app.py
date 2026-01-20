@@ -6,66 +6,55 @@ from enum import Enum
 from dataclasses import dataclass, field, asdict
 from typing import List, Dict, Optional, Tuple
 
-# --- 1. CONFIGURATION & ENUMS ---
+# --- SAFE IMPORT FOR GRAPHVIZ ---
+try:
+    import graphviz
+    HAS_GRAPHVIZ = True
+except ImportError:
+    HAS_GRAPHVIZ = False
 
-class GeneType(str, Enum):
-    STRUCTURE = "Structure"
-    AROMA = "Aroma"
-    RESISTANCE = "Resistance"
+# --- 1. CONFIGURATION ---
 
-# --- 2. GENETIC DATABASE ---
+# The 4 Terpene Alleles
+TERPENES = {
+    "L": "Limonene (Citrus)",
+    "M": "Myrcene (Earth)",
+    "P": "Pinene (Pine)",
+    "C": "Caryophyllene (Spice)"
+}
 
-@dataclass
-class GeneDefinition:
-    code: str
-    name: str
-    dom_label: str
-    rec_label: str
-    dom_desc: str
-    rec_desc: str
-
-GENOME_DB = {
-    "structure": GeneDefinition(
-        code="T", 
-        name="Structure", 
-        dom_label="Sativa (Tall)", 
-        rec_label="Indica (Short)",
-        dom_desc="Tall growth, longer flowering.",
-        rec_desc="Short, stout, fast flowering."
-    ),
-    "aroma": GeneDefinition(
-        code="L", 
-        name="Terpene Profile", 
-        dom_label="Limonene (Citrus)", 
-        rec_label="Myrcene (Berry)",
-        dom_desc="Sharp, energetic citrus notes.",
-        rec_desc="Deep, relaxing berry/earth notes."
-    ),
-    "resistance": GeneDefinition(
-        code="R", 
-        name="Hardiness", 
-        dom_label="Hardy", 
-        rec_label="Sensitive",
-        dom_desc="Resistant to mold and pests.",
-        rec_desc="Requires strict environment control."
-    )
+# Flavor Combo Names (Sorted Tuple -> Name)
+FLAVOR_COMBOS = {
+    ("L", "L"): "Super Lemon Haze",
+    ("M", "M"): "Deep Earth",
+    ("P", "P"): "Pure Pine",
+    ("C", "C"): "Black Pepper",
+    ("L", "M"): "Mango Citrus",
+    ("L", "P"): "Lemon Sol",
+    ("C", "L"): "Spicy Lemon",
+    ("M", "P"): "Forest Floor",
+    ("C", "M"): "Musky Spice",
+    ("C", "P"): "Peppery Pine"
 }
 
 UPGRADES_DB = {
     "hydro": {"name": "Hydroponic System", "cost": 2500, "desc": "+20% Yield on all harvests."},
     "hepa":  {"name": "HEPA Filtration", "cost": 1500, "desc": "Reduces pest/mold risk by 50%."},
-    "seq":   {"name": "Genetic Sequencer", "cost": 4000, "desc": "Reveals hidden GENOTYPES (e.g. Tt vs TT)."},
-    "brand": {"name": "Brand Marketing", "cost": 3000, "desc": "+15% Sale Price on Marketplace."}
+    "seq":   {"name": "Genetic Sequencer", "cost": 4000, "desc": "Reveals hidden GENOTYPES."},
+    "brand": {"name": "Brand Marketing", "cost": 3000, "desc": "+15% Sale Price."}
 }
 
-# --- 3. DATA MODELS ---
+# --- 2. DATA MODELS ---
 
 @dataclass
 class Strain:
     name: str
     id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
     
-    # Genotype
+    # Genetics: 
+    # structure: (T, t)
+    # resistance: (R, r)
+    # aroma: (L, P) <- New Codominant Logic
     genetics: Dict[str, Tuple[str, str]] = field(default_factory=dict)
     
     # Core Stats
@@ -85,7 +74,7 @@ class Strain:
         base_pot = 50
         base_yld = 50
         
-        # Structure Modifier
+        # Structure Modifier (Mendelian T vs t)
         s_alleles = self.genetics.get("structure", ("t", "t"))
         if "T" in s_alleles: 
             base_pot += 15
@@ -93,53 +82,65 @@ class Strain:
         else: 
             base_pot -= 5
             base_yld += 20
+        
+        # Aroma Modifier (Complexity Boost)
+        # Heterozygous aromas (L, P) are more robust than Homozygous (L, L)
+        a_alleles = self.genetics.get("aroma", ("L", "L"))
+        if a_alleles[0] != a_alleles[1]:
+            base_pot += 5 # Entourage effect bonus
             
         self.potency = max(10, min(100, int(base_pot + random.uniform(-10, 10))))
         self.yield_amount = max(10, min(100, int(base_yld + random.uniform(-10, 10))))
 
-    def get_phenotype_label(self, gene_key: str) -> str:
-        gene_def = GENOME_DB[gene_key]
-        alleles = self.genetics[gene_key]
-        if gene_def.code in alleles:
-            return gene_def.dom_label
-        return gene_def.rec_label
+    def get_aroma_label(self) -> str:
+        """Returns the fancy name for the terpene combo."""
+        alleles = sorted(self.genetics["aroma"])
+        key = tuple(alleles)
+        return FLAVOR_COMBOS.get(key, "Complex Hybrid")
+
+    def get_structure_label(self) -> str:
+        if "T" in self.genetics["structure"]: return "Sativa (Tall)"
+        return "Indica (Short)"
+
+    def get_resistance_label(self) -> str:
+        if "R" in self.genetics["resistance"]: return "Hardy"
+        return "Sensitive"
 
     def get_growth_speed(self) -> int:
         if "T" in self.genetics["structure"]: return 30
         return 60
 
-    def to_dict(self):
-        return asdict(self)
-
+    def to_dict(self): return asdict(self)
     @staticmethod
     def from_dict(data):
         s = Strain(**data)
         s.genetics = {k: tuple(v) for k, v in s.genetics.items()}
         return s
 
-# --- 4. GAME LOGIC ENGINES ---
+# --- 3. LOGIC ENGINES ---
 
 class BreedingEngine:
     @staticmethod
     def breed(parent_a: Strain, parent_b: Strain, name_suggestion: str, upgrades: List[str]) -> Strain:
         child = Strain(name=name_suggestion)
         child.generation = max(parent_a.generation, parent_b.generation) + 1
-        
-        # Lineage Tracking
         child.parents_text = f"{parent_a.name} x {parent_b.name}"
         child.parent_ids = [parent_a.id, parent_b.id]
         
-        # Genetics
-        for key in GENOME_DB.keys():
-            allele_a = random.choice(parent_a.genetics[key])
-            allele_b = random.choice(parent_b.genetics[key])
-            child.genetics[key] = tuple(sorted((allele_a, allele_b)))
+        # Mendelian Genes (Structure/Resistance)
+        for key in ["structure", "resistance"]:
+            a = random.choice(parent_a.genetics[key])
+            b = random.choice(parent_b.genetics[key])
+            child.genetics[key] = tuple(sorted((a, b)))
+            
+        # Codominant Gene (Aroma)
+        # Logic: Pick 1 from A, 1 from B. No Dominance, they mix.
+        terp_a = random.choice(parent_a.genetics["aroma"])
+        terp_b = random.choice(parent_b.genetics["aroma"])
+        child.genetics["aroma"] = tuple(sorted((terp_a, terp_b)))
             
         child.recalculate_stats()
-        
-        if "seq" in upgrades:
-            child.is_sequenced = True
-            
+        if "seq" in upgrades: child.is_sequenced = True
         return child
 
 class GrowEngine:
@@ -151,11 +152,9 @@ class GrowEngine:
     @staticmethod
     def run_cycle(strain: Strain, current_funds: int, upgrades: List[str]):
         cost = GrowEngine.calculate_cost(strain)
-        if current_funds < cost:
-            return {"error": "Insufficient Funds"}
+        if current_funds < cost: return {"error": "Insufficient Funds"}
 
         results = {"yield": 0, "events": [], "cost": cost}
-
         base_yield = strain.yield_amount * 2.5 
         variance = random.uniform(0.8, 1.2)
         multiplier = 1.2 if "hydro" in upgrades else 1.0
@@ -177,49 +176,50 @@ class GrowEngine:
 
 class MarketEngine:
     @staticmethod
-    def get_market_price(upgrades: List[str]):
+    def get_market_state(season: int):
+        # Deterministic randomness based on season so it stays consistent per reload if needed
+        random.seed(season + 999) 
+        
+        # Pick a "Trending Terpene"
+        trending_code = random.choice(["L", "M", "P", "C"])
+        trending_name = TERPENES[trending_code].split(" ")[0]
+        
         base = random.uniform(3.0, 7.0)
-        trend = random.choice(["Stable", "Boom", "Crash"])
-        if trend == "Boom": base *= 1.4
-        elif trend == "Crash": base *= 0.6
-        if "brand" in upgrades: base *= 1.15
-        return round(base, 2), trend
+        
+        random.seed() # Reset seed
+        return base, trending_code, trending_name
 
     @staticmethod
-    def calculate_strain_value(base_price: float, strain: Strain) -> float:
-        aroma_bonus = 1.1 if "L" in strain.genetics["aroma"] else 1.0
-        quality_mod = (strain.potency / 50.0) * aroma_bonus
-        return round(base_price * quality_mod, 2)
+    def calculate_value(base_price: float, strain: Strain, trending_code: str) -> float:
+        # Quality Base
+        val = base_price * (strain.potency / 50.0)
+        
+        # Trend Bonus
+        if trending_code in strain.genetics["aroma"]:
+            val *= 1.3 # 30% Bonus for matching trend
+            
+        # Pure Breed Bonus (Homozygous Aroma)
+        # If L,L -> Niche Market premium
+        if strain.genetics["aroma"][0] == strain.genetics["aroma"][1]:
+            val *= 1.1
+            
+        return round(val, 2)
 
-# --- 5. TEXT VISUALIZATION ENGINE ---
+# --- 4. VISUALIZATION ---
 
 def get_lineage_text(target_strain: Strain, all_strains: List[Strain], depth=0, max_depth=3) -> str:
-    """Recursively builds an ASCII tree string."""
     indent = "    " * depth
     prefix = "└── " if depth > 0 else ""
-    
-    # Base info
-    tree_str = f"{indent}{prefix}{target_strain.name} (Gen {target_strain.generation})\n"
-    
-    if depth >= max_depth:
-        return tree_str
-    
-    # Lookup
+    tree_str = f"{indent}{prefix}{target_strain.name} [{target_strain.get_aroma_label()}]\n"
+    if depth >= max_depth: return tree_str
     strain_map = {s.id: s for s in all_strains}
-    
     if target_strain.parent_ids:
-        # We only show parents if we haven't hit max depth
         for pid in target_strain.parent_ids:
             if pid in strain_map:
-                parent = strain_map[pid]
-                tree_str += get_lineage_text(parent, all_strains, depth + 1, max_depth)
+                tree_str += get_lineage_text(strain_map[pid], all_strains, depth + 1, max_depth)
             else:
-                # Parent deleted or unknown
-                tree_str += f"{indent}    └── [Unknown Ancestor]\n"
-                
+                tree_str += f"{indent}    └── [Unknown]\n"
     return tree_str
-
-# --- 6. STATE & UI ---
 
 def serialize_game_state():
     data = {
@@ -239,16 +239,20 @@ def load_game_state(json_file):
         st.session_state["strains"] = [Strain.from_dict(s_data) for s_data in data["strains"]]
         return True
     except Exception as e:
-        st.error(f"Corrupt save file: {e}")
+        st.error(f"Error: {e}")
         return False
 
+# --- UI ---
+
 if "strains" not in st.session_state:
-    s1 = Strain(name="Highland Gold")
-    s1.genetics = {"structure": ("T", "T"), "aroma": ("L", "L"), "resistance": ("r", "r")} 
+    # Starter 1: Citrus (L) + Pine (P)
+    s1 = Strain(name="Lemon Sol")
+    s1.genetics = {"structure": ("T", "T"), "resistance": ("r", "r"), "aroma": ("L", "P")} 
     s1.recalculate_stats()
     
-    s2 = Strain(name="Deep Chunk")
-    s2.genetics = {"structure": ("t", "t"), "aroma": ("l", "l"), "resistance": ("R", "R")} 
+    # Starter 2: Earth (M) + Spice (C)
+    s2 = Strain(name="Musky Spice")
+    s2.genetics = {"structure": ("t", "t"), "resistance": ("R", "R"), "aroma": ("C", "M")} 
     s2.recalculate_stats()
     
     st.session_state["strains"] = [s1, s2]
@@ -257,19 +261,17 @@ if "strains" not in st.session_state:
     st.session_state["upgrades"] = []
 
 st.set_page_config(page_title="Cultivar Labs", layout="wide")
-
-st.title("🧬 Cultivar Labs: Lineage Edition")
+st.title("🧬 Cultivar Labs: Entourage Edition")
 st.markdown("---")
+
+# Get Market State for this Season
+base_price, trend_code, trend_name = MarketEngine.get_market_state(st.session_state["season"])
 
 with st.sidebar:
     st.metric("Funds", f"${st.session_state['funds']:,}")
     st.metric("Season", st.session_state['season'])
+    st.info(f"📢 **Market Craze:**\n{trend_name} Strains")
     
-    if st.session_state["upgrades"]:
-        st.caption("Upgrades:")
-        for u in st.session_state["upgrades"]:
-            st.write(f"✅ {UPGRADES_DB[u]['name']}")
-
     st.divider()
     st.download_button("💾 Save", serialize_game_state(), "save.json", "application/json")
     uf = st.file_uploader("📂 Load", type=["json"])
@@ -282,14 +284,15 @@ with st.sidebar:
 t1, t2, t3, t4, t5 = st.tabs(["🌱 Grow", "💰 Market", "🏗️ Store", "🧬 Breed", "📂 Library"])
 
 with t1:
-    st.subheader(f"Active Cultivation (Season {st.session_state['season']})")
+    st.subheader(f"Active Cultivation")
     c1, c2 = st.columns([1, 2])
     with c1:
         choice = st.selectbox("Strain", [s.name for s in st.session_state["strains"]])
         target = next(s for s in st.session_state["strains"] if s.name == choice)
     with c2:
         cost = GrowEngine.calculate_cost(target)
-        st.info(f"**Cost:** ${cost} | **Duration:** {100 - target.get_growth_speed()} days")
+        st.info(f"**Cost:** ${cost} | **Time:** {100 - target.get_growth_speed()} days")
+        st.caption(f"Profile: {target.get_aroma_label()}")
         
     st.divider()
     if st.button("🚀 Start Cycle", type="primary", use_container_width=True):
@@ -307,16 +310,24 @@ with t1:
 
 with t2:
     st.subheader("Marketplace")
-    price, trend = MarketEngine.get_market_price(st.session_state["upgrades"])
+    st.markdown(f"The market is paying a premium for **{trend_name}** ({TERPENES[trend_code]}).")
+    
     c1, c2 = st.columns([1, 2])
-    c1.metric("Base Price", f"${price}/g", delta=trend)
+    c1.metric("Base Price", f"${round(base_price,2)}/g")
+    
     with c2:
         for s in st.session_state["strains"]:
             if s.inventory_amount > 0:
-                val = MarketEngine.calculate_strain_value(price, s)
+                val = MarketEngine.calculate_value(base_price, s, trend_code)
+                is_trending = trend_code in s.genetics["aroma"]
+                
                 with st.container(border=True):
                     cols = st.columns([2, 1, 1])
-                    cols[0].write(f"**{s.name}**")
+                    title = f"**{s.name}**"
+                    if is_trending: title += " 🔥"
+                    cols[0].markdown(title)
+                    cols[0].caption(f"{s.get_aroma_label()}")
+                    
                     cols[1].caption(f"{s.inventory_amount}g @ ${val}/g")
                     if cols[2].button(f"Sell (${int(s.inventory_amount * val)})", key=f"sell_{s.id}"):
                         st.session_state["funds"] += int(s.inventory_amount * val)
@@ -354,25 +365,24 @@ with t4:
 
 with t5:
     st.subheader("Strain Library")
-    
     all_names = [s.name for s in st.session_state["strains"]]
-    selected_name = st.selectbox("Select Strain to Inspect", all_names)
-    selected_strain = next(s for s in st.session_state["strains"] if s.name == selected_name)
+    sel_name = st.selectbox("Select Strain", all_names)
+    sel = next(s for s in st.session_state["strains"] if s.name == sel_name)
     
     c1, c2 = st.columns(2)
     with c1:
-        st.write(f"**Generation:** {selected_strain.generation}")
-        st.write(f"**Potency:** {selected_strain.potency}")
-        st.write(f"**Yield:** {selected_strain.yield_amount}")
+        st.write(f"**Profile:** {sel.get_aroma_label()}")
+        st.write(f"**Structure:** {sel.get_structure_label()}")
+        st.write(f"**Resistance:** {sel.get_resistance_label()}")
+        
         st.caption("Genetics:")
-        if "seq" in st.session_state["upgrades"] or selected_strain.is_sequenced:
-             for k, v in selected_strain.genetics.items():
-                 st.write(f"- {GENOME_DB[k].name}: `{v}`")
+        if "seq" in st.session_state["upgrades"] or sel.is_sequenced:
+             st.write(f"- Aroma: `{sel.genetics['aroma']}`")
+             st.write(f"- Structure: `{sel.genetics['structure']}`")
+             st.write(f"- Resistance: `{sel.genetics['resistance']}`")
         else:
             st.write("🔒 Sequence Hidden")
 
     with c2:
         st.caption("Ancestry Log")
-        # Text-Based Visualization
-        lineage_txt = get_lineage_text(selected_strain, st.session_state["strains"], depth=0)
-        st.code(lineage_txt, language="text")
+        st.code(get_lineage_text(sel, st.session_state["strains"]), language="text")
