@@ -251,7 +251,7 @@ with tab1:
         est_cost = GrowEngine.calculate_cost(target_strain)
         st.info(f"**Operational Cost:** ${est_cost} | **Est. Time:** {100 - target_strain.growth_speed} days")
         
-    # Button moved outside of columns to prevent nesting error
+    # Button outside columns
     st.divider()
     if st.button("🚀 Start Grow Cycle", type="primary", use_container_width=True):
         report = GrowEngine.run_cycle(target_strain, st.session_state["funds"])
@@ -266,7 +266,7 @@ with tab1:
             
             st.success("Harvest Complete!")
             
-            # Display Metrics Safe from Nesting
+            # Display Metrics
             m1, m2, m3 = st.columns(3)
             m1.metric("Yield", f"{report['yield']}g")
             m2.metric("Op Cost", f"-${report['cost']}")
@@ -286,7 +286,6 @@ with tab2:
     
     price, trend = MarketEngine.get_market_price()
     
-    # Display Ticker
     c1, c2, c3 = st.columns(3)
     c1.metric("Current Spot Price", f"${price}/g")
     c2.metric("Market Trend", trend, delta="Hot" if trend=="Boom" else "Cold" if trend=="Crash" else "Normal")
@@ -294,18 +293,22 @@ with tab2:
     
     st.divider()
     
-    sc1, sc2 = st.columns([2, 1])
-    with sc1:
-        sell_amount = st.slider("Amount to Sell (g)", 0, st.session_state['inventory'], st.session_state['inventory'])
-    
-    with sc2:
-        st.write("##") # spacer
-        if st.button("Sell Inventory"):
-            revenue = int(sell_amount * price)
-            st.session_state["funds"] += revenue
-            st.session_state["inventory"] -= sell_amount
-            st.success(f"Sold {sell_amount}g for ${revenue}!")
-            st.rerun()
+    # FIXED LOGIC HERE: Only show slider if inventory > 0
+    if st.session_state['inventory'] > 0:
+        sc1, sc2 = st.columns([2, 1])
+        with sc1:
+            sell_amount = st.slider("Amount to Sell (g)", 0, st.session_state['inventory'], st.session_state['inventory'])
+        
+        with sc2:
+            st.write("##") # spacer
+            if st.button("Sell Inventory"):
+                revenue = int(sell_amount * price)
+                st.session_state["funds"] += revenue
+                st.session_state["inventory"] -= sell_amount
+                st.success(f"Sold {sell_amount}g for ${revenue}!")
+                st.rerun()
+    else:
+        st.info("Inventory is empty. Go to the Grow Op to produce stock.")
 
 # --- TAB 3: BREEDING ---
 with tab3:
