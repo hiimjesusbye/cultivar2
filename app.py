@@ -78,7 +78,8 @@ class Strain:
     def from_dict(data):
         return Strain(**data)
 
-# --- 3. TRAIT DATABASE ---
+# --- 3. DATABASES ---
+
 TRAIT_DB = {
     "chem_limonene": Trait("chem_limonene", "Heavy Limonene", TraitCategory.CHEMICAL, TraitEffect.POSITIVE, Rarity.COMMON, "Strong citrus aroma.", 1.2),
     "chem_cbd_rich": Trait("chem_cbd_rich", "CBD Dominant", TraitCategory.CHEMICAL, TraitEffect.MIXED, Rarity.UNCOMMON, "High medicinal value, lower psychoactivity.", 0.8),
@@ -88,6 +89,14 @@ TRAIT_DB = {
     "neg_herm": Trait("neg_herm", "Unstable Sex", TraitCategory.NEGATIVE, TraitEffect.NEGATIVE, Rarity.COMMON, "High risk of hermaphroditism under stress.", 2.0),
     "neg_mold": Trait("neg_mold", "Mold Susceptibility", TraitCategory.NEGATIVE, TraitEffect.NEGATIVE, Rarity.UNCOMMON, "Rot risk in high humidity.", 1.5),
     "aes_frosty": Trait("aes_frosty", "Trichome Blanket", TraitCategory.AESTHETIC, TraitEffect.POSITIVE, Rarity.RARE, "Looks like it was rolled in sugar.", 0.6),
+}
+
+# Define Upgrades: ID -> (Name, Cost, Description)
+UPGRADES_DB = {
+    "hydro": {"name": "Hydroponic System", "cost": 2000, "desc": "+20% Yield on all harvests."},
+    "hepa":  {"name": "HEPA Filtration", "cost": 1500, "desc": "Reduces pest/mold risk by 50%."},
+    "seq":   {"name": "Genetic Sequencer", "cost": 5000, "desc": "New breeds start with 2 traits revealed."},
+    "brand": {"name": "Brand Marketing", "cost": 3000, "desc": "+15% Sale Price on Marketplace."}
 }
 
 # --- 4. GAME LOGIC ENGINES ---
@@ -101,7 +110,7 @@ class BreedingEngine:
         return max(1, min(100, int(base + variance)))
 
     @staticmethod
-    def breed(parent_a: Strain, parent_b: Strain, name_suggestion: str) -> Strain:
+    def breed(parent_a: Strain, parent_b: Strain, name_suggestion: str, upgrades: List[str]) -> Strain:
         avg_stability = (parent_a.stability + parent_b.stability) / 2
         
         child = Strain(name=name_suggestion)
@@ -139,8 +148,13 @@ class BreedingEngine:
         if len(final_traits) > 4: final_traits = random.sample(final_traits, 4)
         child.traits = final_traits
         
+        # UPGRADE: Genetic Sequencer
+        reveal_count = 2 if "seq" in upgrades else 1
+        
         if final_traits:
-            child.revealed_traits.append(random.choice(final_traits))
+            # Safely sample up to reveal_count
+            k = min(len(final_traits), reveal_count)
+            child.revealed_traits.extend(random.sample(final_traits, k))
 
         return child
 
@@ -151,7 +165,7 @@ class GrowEngine:
         return 500 + (days_to_harvest * 10)
 
     @staticmethod
-    def run_cycle(strain: Strain, current_funds: int):
+    def run_cycle(strain: Strain, current_funds: int, upgrades: List[str]):
         cost = GrowEngine.calculate_cost(strain)
         
         if current_funds < cost:
@@ -168,7 +182,11 @@ class GrowEngine:
         # Yield Calc
         base_yield = strain.yield_amount * 3 
         variance = random.uniform(0.8, 1.2)
-        final_yield = int(base_yield * variance)
+        
+        # UPGRADE: Hydroponic System
+        multiplier = 1.2 if "hydro" in upgrades else 1.0
+        final_yield = int(base_yield * variance * multiplier)
+        
         results["yield"] = final_yield
 
         # Discovery Logic
@@ -186,7 +204,10 @@ class GrowEngine:
             results["stability_gain"] = gain
 
         # Event: Crop Failure Risk
-        if strain.hardiness < 30 and random.random() < 0.2:
+        # UPGRADE: HEPA Filtration (Reduces risk threshold)
+        risk_threshold = 0.1 if "hepa" in upgrades else 0.2
+        
+        if strain.hardiness < 30 and random.random() < risk_threshold:
             loss = int(final_yield * 0.5)
             final_yield -= loss
             results["yield"] = final_yield
@@ -197,7 +218,7 @@ class GrowEngine:
 
 class MarketEngine:
     @staticmethod
-    def get_market_price():
+    def get_market_price(upgrades: List[str]):
         base = random.uniform(3.0, 8.0)
         trend = random.choice(["Stable", "Boom", "Crash"])
         
@@ -205,29 +226,32 @@ class MarketEngine:
             base *= 1.5
         elif trend == "Crash":
             base *= 0.6
+        
+        # UPGRADE: Brand Marketing
+        if "brand" in upgrades:
+            base *= 1.15
             
         return round(base, 2), trend
 
-# --- 5. SYSTEM FUNCTIONS (SAVE/LOAD) ---
+# --- 5. SYSTEM FUNCTIONS ---
 
 def serialize_game_state():
-    """Convert session state to a JSON string."""
     data = {
         "funds": st.session_state["funds"],
         "inventory": st.session_state["inventory"],
         "season": st.session_state["season"],
+        "upgrades": st.session_state["upgrades"],
         "strains": [s.to_dict() for s in st.session_state["strains"]]
     }
     return json.dumps(data, indent=2)
 
 def load_game_state(json_file):
-    """Parse JSON and populate session state."""
     try:
         data = json.load(json_file)
         st.session_state["funds"] = data["funds"]
         st.session_state["inventory"] = data["inventory"]
         st.session_state["season"] = data["season"]
-        # Reconstruct Strain objects
+        st.session_state["upgrades"] = data.get("upgrades", []) # Backward compatibility
         st.session_state["strains"] = [Strain.from_dict(s_data) for s_data in data["strains"]]
         return True
     except Exception as e:
@@ -249,6 +273,7 @@ if "strains" not in st.session_state:
     st.session_state["season"] = 1
     st.session_state["inventory"] = 0 
     st.session_state["funds"] = 5000 
+    st.session_state["upgrades"] = []
 
 st.set_page_config(page_title="Cultivar Labs", layout="wide")
 
@@ -262,27 +287,23 @@ with st.sidebar:
     st.metric("Inventory", f"{st.session_state['inventory']}g")
     st.metric("Season", st.session_state['season'])
     
+    if st.session_state["upgrades"]:
+        st.caption("Active Upgrades:")
+        for u in st.session_state["upgrades"]:
+            st.write(f"✅ {UPGRADES_DB[u]['name']}")
+
     st.divider()
     
-    # SAVE SYSTEM
+    # SYSTEM
     st.subheader("System")
-    
-    # 1. Download (Save)
     json_str = serialize_game_state()
-    st.download_button(
-        label="💾 Save Game (JSON)",
-        data=json_str,
-        file_name="cultivar_save.json",
-        mime="application/json"
-    )
+    st.download_button("💾 Save Game", json_str, "cultivar_save.json", "application/json")
     
-    # 2. Upload (Load)
     uploaded_file = st.file_uploader("📂 Load Game", type=["json"])
-    if uploaded_file is not None:
-        if st.button("Confirm Load"):
-            if load_game_state(uploaded_file):
-                st.success("Game Loaded!")
-                st.rerun()
+    if uploaded_file is not None and st.button("Confirm Load"):
+        if load_game_state(uploaded_file):
+            st.success("Loaded!")
+            st.rerun()
 
     st.divider()
     if st.button("Reset Simulation", type="secondary"):
@@ -290,14 +311,13 @@ with st.sidebar:
         st.rerun()
 
 # Tabs
-tab1, tab2, tab3, tab4 = st.tabs(["🌱 Grow Op", "💰 Marketplace", "🧬 Breeding", "📂 Library"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["🌱 Grow Op", "💰 Marketplace", "🏗️ Lab Store", "🧬 Breeding", "📂 Library"])
 
 # --- TAB 1: GROW OP ---
 with tab1:
     st.subheader(f"Active Cultivation (Season {st.session_state['season']})")
     
     col1, col2 = st.columns([1, 2])
-    
     with col1:
         grow_choice = st.selectbox("Select Mother Strain", [s.name for s in st.session_state["strains"]])
         target_strain = next(s for s in st.session_state["strains"] if s.name == grow_choice)
@@ -305,10 +325,14 @@ with tab1:
     with col2:
         est_cost = GrowEngine.calculate_cost(target_strain)
         st.info(f"**Operational Cost:** ${est_cost} | **Est. Time:** {100 - target_strain.growth_speed} days")
+        if "hydro" in st.session_state["upgrades"]:
+            st.caption("💧 Hydroponics Active: +20% Yield Boost")
+        if "hepa" in st.session_state["upgrades"]:
+            st.caption("🛡️ HEPA Active: Reduced Contamination Risk")
         
     st.divider()
     if st.button("🚀 Start Grow Cycle", type="primary", use_container_width=True):
-        report = GrowEngine.run_cycle(target_strain, st.session_state["funds"])
+        report = GrowEngine.run_cycle(target_strain, st.session_state["funds"], st.session_state["upgrades"])
         
         if "error" in report:
             st.error(f"Cannot start grow: {report['error']}")
@@ -336,12 +360,15 @@ with tab1:
 with tab2:
     st.subheader("Wholesale Market")
     
-    price, trend = MarketEngine.get_market_price()
+    price, trend = MarketEngine.get_market_price(st.session_state["upgrades"])
     
     c1, c2, c3 = st.columns(3)
     c1.metric("Current Spot Price", f"${price}/g")
     c2.metric("Market Trend", trend, delta="Hot" if trend=="Boom" else "Cold" if trend=="Crash" else "Normal")
     c3.metric("Inventory Value", f"${int(st.session_state['inventory'] * price):,}")
+    
+    if "brand" in st.session_state["upgrades"]:
+        st.caption("✨ Premium Brand Pricing Applied (+15%)")
     
     st.divider()
     
@@ -359,10 +386,35 @@ with tab2:
                 st.success(f"Sold {sell_amount}g for ${revenue}!")
                 st.rerun()
     else:
-        st.info("Inventory is empty. Go to the Grow Op to produce stock.")
+        st.info("Inventory is empty.")
 
-# --- TAB 3: BREEDING ---
+# --- TAB 3: LAB STORE (NEW) ---
 with tab3:
+    st.subheader("Facility Upgrades")
+    st.write("Invest in permanent improvements for your laboratory.")
+    
+    for uid, data in UPGRADES_DB.items():
+        col_desc, col_buy = st.columns([3, 1])
+        
+        with col_desc:
+            st.markdown(f"**{data['name']}**")
+            st.write(data['desc'])
+        
+        with col_buy:
+            if uid in st.session_state["upgrades"]:
+                st.success("Purchased")
+            else:
+                if st.button(f"Buy (${data['cost']})", key=f"buy_{uid}"):
+                    if st.session_state["funds"] >= data['cost']:
+                        st.session_state["funds"] -= data['cost']
+                        st.session_state["upgrades"].append(uid)
+                        st.rerun()
+                    else:
+                        st.error("Insufficient Funds")
+        st.divider()
+
+# --- TAB 4: BREEDING ---
+with tab4:
     st.subheader("Crossbreeding Projects")
     col1, col2 = st.columns(2)
     
@@ -386,14 +438,14 @@ with tab3:
             parent_a = next(s for s in st.session_state["strains"] if s.name == p1_name)
             parent_b = next(s for s in st.session_state["strains"] if s.name == p2_name)
             
-            child = BreedingEngine.breed(parent_a, parent_b, new_name)
+            child = BreedingEngine.breed(parent_a, parent_b, new_name, st.session_state["upgrades"])
             st.session_state["strains"].append(child)
             
             st.success(f"Successfully bred {child.name}!")
             st.info(f"Stats: Potency {child.get_tier(child.potency)} | Stability {child.stability}%")
 
-# --- TAB 4: LIBRARY ---
-with tab4:
+# --- TAB 5: LIBRARY ---
+with tab5:
     st.subheader("Strain Database")
     for strain in st.session_state["strains"]:
         with st.expander(f"{strain.name} (Gen {strain.generation})"):
