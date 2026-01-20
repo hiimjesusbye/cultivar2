@@ -172,7 +172,7 @@ for t_name in st.session_state.discovered_terpenes:
     st.sidebar.markdown(f"**{t_name}**: _{desc}_")
 
 # --- 5. MAIN UI ---
-st.title("Cannabis Tycoon: Hard Mode")
+st.title("Cultivar Labs")
 
 # === BREEDING ===
 if st.session_state.phase == "PLANNING":
@@ -280,4 +280,5 @@ elif st.session_state.phase == "HARVEST":
         st.session_state.credits += total_val
         reset_season(total_val)
         st.rerun()
+
 
