@@ -1,284 +1,272 @@
 import streamlit as st
 import random
-import json
-import time
+import uuid
+from enum import Enum
+from dataclasses import dataclass, field
+from typing import List, Dict, Optional
 
-# --- 1. CONFIGURATION & DATA ---
-st.set_page_config(page_title="Cultivar Labs", page_icon="🌿", layout="wide")
+# --- 1. CONFIGURATION & ENUMS ---
 
-SHOP_ITEMS = {
-    "LED Grow Lights": {"cost": 200, "desc": "+20% Yield on all harvests"},
-    "Hydroponic System": {"cost": 300, "desc": "+20% Sale Price (Potency boost)"},
-    "Auto-Trimmer": {"cost": 500, "desc": "Unlocks a 5th Grow Plot"}
-}
+class TraitCategory(Enum):
+    CHEMICAL = "Chemical Profile"
+    GROWTH = "Growth Behavior"
+    MARKET = "Market/Consumer"
+    AESTHETIC = "Aesthetic/Flavor"
+    NEGATIVE = "Negative/Quirk"
 
-TERPENE_INFO = {
-    "Myrcene": "Sedative / Relaxing",
-    "Limonene": "Energy / Mood Lift",
-    "Caryophyllene": "Spicy / Anti-Inflammatory",
-    "Pinene": "Piney / Focus",
-    "Linalool": "Floral / Calming",
-    "Humulene": "Earthy / Appetite Suppressant",
-    "Terpinolene": "Fruity / Uplifting",
-    "Ocimene": "Sweet / Decongestant"
-}
+class TraitEffect(Enum):
+    POSITIVE = "Positive"
+    NEGATIVE = "Negative"
+    MIXED = "Mixed"
 
-# --- 2. STATE MANAGEMENT ---
-default_state = {
-    "credits": 100,
-    "season": 1,
-    "overhead": 50,
-    "breed_cost": 50,
-    "breeds_left": 1,
-    "phase": "PLANNING", 
-    "plots_results": [],
-    "discovered_terpenes": ["Myrcene", "Limonene"],
-    "strains": {
-        "Industrial Hemp": {
-            "potency": 2, "yield": 10, "resistance": 8, "speed": 4, 
-            "terpenes": {"Myrcene": 3} 
-        },
-        "Wild Sativa": {
-            "potency": 8, "yield": 3, "resistance": 3, "speed": 9, 
-            "terpenes": {"Limonene": 7}
-        }
-    },
-    "upgrades": [],
-    "game_over": False
-}
+class Rarity(Enum):
+    COMMON = "Common"
+    UNCOMMON = "Uncommon"
+    RARE = "Rare"
+    LEGENDARY = "Legendary"
 
-for key, value in default_state.items():
-    if key not in st.session_state:
-        st.session_state[key] = value
+# --- 2. DATA MODELS ---
 
-# --- 3. LOGIC FUNCTIONS ---
+@dataclass
+class Trait:
+    id: str
+    name: str
+    category: TraitCategory
+    effect_type: TraitEffect
+    rarity: Rarity
+    description: str
+    inheritance_weight: float = 1.0  # Higher = more likely to pass down
 
-def mix_terpenes(t1, t2):
-    """Breeds two terpene profiles and checks for discoveries"""
-    new_terps = {}
-    all_keys = set(list(t1.keys()) + list(t2.keys()))
-    for key in all_keys:
-        val1, val2 = t1.get(key, 0), t2.get(key, 0)
-        base = (val1 + val2) / 2 if (val1 > 0 and val2 > 0) else max(val1, val2) * 0.9
-        final_val = round(base + random.uniform(-1.5, 1.5), 1)
-        if final_val > 0.5: new_terps[key] = final_val
-
-    # Mutation Chance
-    mutation_chance = 0.2 + (len(new_terps) * 0.05)
-    if random.random() < mutation_chance:
-        possible_new = [t for t in TERPENE_INFO.keys() if t not in new_terps]
-        if possible_new:
-            discovered = random.choice(possible_new)
-            new_terps[discovered] = random.randint(1, 4)
-            if discovered not in st.session_state.discovered_terpenes:
-                st.session_state.discovered_terpenes.append(discovered)
-                st.toast(f"🧪 NEW DISCOVERY: {discovered}!", icon="🎉")
-    return new_terps
-
-def run_grow_simulation(plot_assignments):
-    results = []
-    for strain_name in plot_assignments:
-        stats = st.session_state.strains[strain_name]
-        
-        # Variance
-        actual_yield = round(stats['yield'] * random.uniform(0.8, 1.2), 2)
-        actual_potency = stats['potency']
-        
-        # Upgrades
-        if "LED Grow Lights" in st.session_state.upgrades: actual_yield *= 1.2
-        if "Hydroponic System" in st.session_state.upgrades: actual_potency *= 1.2
-            
-        terp_value = sum(stats['terpenes'].values()) * 0.5
-        price_per_unit = (actual_potency * 5) + terp_value
-        total_value = round(actual_yield * price_per_unit, 2)
-        
-        results.append({
-            "strain": strain_name,
-            "yield": round(actual_yield, 2),
-            "value": total_value,
-            "terp_bonus": round(terp_value, 2)
-        })
-    return results
-
-def reset_season(profit):
-    # Credits update happens inside the button now, this just handles season reset
-    cost = st.session_state.overhead
+@dataclass
+class Strain:
+    name: str
+    id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
     
-    # Check if they can afford expenses (Profit is already added to credits before this check)
-    if st.session_state.credits >= cost:
-        st.session_state.credits -= cost
-        st.session_state.season += 1
-        st.session_state.overhead *= 2 # HARD MODE: Expenses Double
-        st.session_state.breeds_left = 1
-        st.session_state.phase = "PLANNING"
-        st.session_state.plots_results = []
-        st.success("Season Complete!")
-    else:
-        st.session_state.game_over = True
+    # Core Stats (0-100 Integers, displayed as Tiers)
+    potency: int = 50
+    yield_amount: int = 50
+    growth_speed: int = 50  # Higher = Faster
+    stability: int = 50     # Higher = Less mutation/variance
+    hardiness: int = 50
+    
+    # Genetics
+    traits: List[str] = field(default_factory=list) # List of Trait IDs
+    revealed_traits: List[str] = field(default_factory=list) # Subset of traits player can see
+    generation: int = 1
+    parents: str = "Unknown"
 
-# --- 4. SIDEBAR ---
-st.sidebar.title(f"🍂 Season {st.session_state.season}")
+    def get_tier(self, value: int) -> str:
+        """Converts raw int to descriptive tier."""
+        if value < 20: return "Very Low"
+        if value < 40: return "Low"
+        if value < 60: return "Average"
+        if value < 80: return "High"
+        return "Exceptional"
 
-if st.session_state.game_over:
-    st.error("GAME OVER: Bankrupt!")
-    if st.sidebar.button("Restart"):
-        st.session_state.clear()
+    def get_growth_tier(self) -> str:
+        """Special tier text for growth speed."""
+        if self.growth_speed < 30: return "Sluggish"
+        if self.growth_speed < 60: return "Standard"
+        return "Vigorous"
+
+# --- 3. TRAIT DATABASE ---
+# A small sample of the full database for v1.0
+TRAIT_DB = {
+    "chem_limonene": Trait("chem_limonene", "Heavy Limonene", TraitCategory.CHEMICAL, TraitEffect.POSITIVE, Rarity.COMMON, "Strong citrus aroma.", 1.2),
+    "chem_cbd_rich": Trait("chem_cbd_rich", "CBD Dominant", TraitCategory.CHEMICAL, TraitEffect.MIXED, Rarity.UNCOMMON, "High medicinal value, lower psychoactivity.", 0.8),
+    "grow_fast": Trait("grow_fast", "Rapid Rooting", TraitCategory.GROWTH, TraitEffect.POSITIVE, Rarity.UNCOMMON, "Cuttings root 20% faster.", 1.0),
+    "grow_tall": Trait("grow_tall", "Sky-High Stretch", TraitCategory.GROWTH, TraitEffect.MIXED, Rarity.COMMON, "Grows very tall, requires vertical space.", 1.5),
+    "mkt_purple": Trait("mkt_purple", "Deep Purple", TraitCategory.AESTHETIC, TraitEffect.POSITIVE, Rarity.RARE, "Stunning bag appeal.", 0.5),
+    "neg_herm": Trait("neg_herm", "Unstable Sex", TraitCategory.NEGATIVE, TraitEffect.NEGATIVE, Rarity.COMMON, "High risk of hermaphroditism under stress.", 2.0), # High weight!
+    "neg_mold": Trait("neg_mold", "Mold Susceptibility", TraitCategory.NEGATIVE, TraitEffect.NEGATIVE, Rarity.UNCOMMON, "Rot risk in high humidity.", 1.5),
+    "aes_frosty": Trait("aes_frosty", "Trichome Blanket", TraitCategory.AESTHETIC, TraitEffect.POSITIVE, Rarity.RARE, "Looks like it was rolled in sugar.", 0.6),
+}
+
+# --- 4. BREEDING ENGINE ---
+
+class BreedingEngine:
+    @staticmethod
+    def blend_stat(val_a: int, val_b: int, parent_stability_avg: int) -> int:
+        """
+        Blends stats with variance based on parent stability.
+        Lower stability = Higher variance (risk/reward).
+        """
+        base = (val_a + val_b) / 2
+        
+        # Stability of 100 = +/- 2 variance. Stability of 0 = +/- 25 variance.
+        variance_range = 25 - (parent_stability_avg * 0.23) 
+        variance = random.uniform(-variance_range, variance_range)
+        
+        return max(1, min(100, int(base + variance)))
+
+    @staticmethod
+    def breed(parent_a: Strain, parent_b: Strain, name_suggestion: str) -> Strain:
+        avg_stability = (parent_a.stability + parent_b.stability) / 2
+        
+        # 1. Create Child Shell
+        child = Strain(name=name_suggestion)
+        child.generation = max(parent_a.generation, parent_b.generation) + 1
+        child.parents = f"{parent_a.name} x {parent_b.name}"
+        
+        # 2. Blend Core Stats
+        child.potency = BreedingEngine.blend_stat(parent_a.potency, parent_b.potency, avg_stability)
+        child.yield_amount = BreedingEngine.blend_stat(parent_a.yield_amount, parent_b.yield_amount, avg_stability)
+        child.growth_speed = BreedingEngine.blend_stat(parent_a.growth_speed, parent_b.growth_speed, avg_stability)
+        child.hardiness = BreedingEngine.blend_stat(parent_a.hardiness, parent_b.hardiness, avg_stability)
+        
+        # 3. Stability Decay (Entropy)
+        # Stability naturally degrades by 5-15 points per gen unless stabilized
+        decay = random.randint(5, 15)
+        child.stability = max(10, int(avg_stability - decay))
+
+        # 4. Trait Inheritance Logic
+        potential_traits = set(parent_a.traits + parent_b.traits)
+        child_traits = set()
+        
+        # Rule: Guaranteed Inheritance (Pick 1 random parent trait)
+        if potential_traits:
+            guaranteed = random.choice(list(potential_traits))
+            child_traits.add(guaranteed)
+        
+        # Rule: Weighted Rolls for others
+        for t_id in potential_traits:
+            if t_id in child_traits: continue # Already added
+            
+            trait_data = TRAIT_DB.get(t_id)
+            if not trait_data: continue
+
+            # Calculate chance
+            # Base 40% chance + Weight modifier
+            chance = 0.4 * trait_data.inheritance_weight
+            
+            # Rule: Negative Bias (Negative traits stickier)
+            if trait_data.effect_type == TraitEffect.NEGATIVE:
+                chance *= 1.5 
+            
+            if random.random() < chance:
+                child_traits.add(t_id)
+
+        # Rule: Mutation (Low stability = high mutation chance)
+        mutation_threshold = (100 - child.stability) / 200  # 0.5 (50%) at 0 stab, 0% at 100 stab
+        if random.random() < mutation_threshold:
+            # Pick a random trait from DB not currently on child
+            available_mutations = [k for k in TRAIT_DB.keys() if k not in child_traits]
+            if available_mutations:
+                mutation = random.choice(available_mutations)
+                child_traits.add(mutation)
+                # Flavor: Mutations are initially hidden
+        
+        # Enforce max 4 traits
+        final_traits = list(child_traits)
+        if len(final_traits) > 4:
+            final_traits = random.sample(final_traits, 4)
+            
+        child.traits = final_traits
+        
+        # Logic: New strains have traits hidden by default, unless they came from parents clearly
+        # For gameplay, let's reveal 1 trait immediately
+        if final_traits:
+            child.revealed_traits.append(random.choice(final_traits))
+
+        return child
+
+# --- 5. UI & STATE MANAGEMENT ---
+
+if "strains" not in st.session_state:
+    # Initialize with 2 Starter Strains
+    s1 = Strain(name="Highland Thai", potency=75, yield_amount=40, growth_speed=30, stability=80)
+    s1.traits = ["grow_tall", "chem_limonene"]
+    s1.revealed_traits = ["grow_tall"]
+    
+    s2 = Strain(name="Deep Chunk", potency=60, yield_amount=80, growth_speed=40, stability=90)
+    s2.traits = ["neg_mold", "aes_frosty"]
+    s2.revealed_traits = ["neg_mold"] # Player knows it molds, doesn't know it's frosty yet
+    
+    st.session_state["strains"] = [s1, s2]
+
+st.set_page_config(page_title="Cultivar Labs", layout="wide")
+
+st.title("🧬 Cultivar Labs: Genetic Engineering")
+st.markdown("---")
+
+# sidebar
+with st.sidebar:
+    st.header("Lab Storage")
+    st.write(f"Strains in Vault: {len(st.session_state['strains'])}")
+    if st.button("Reset Simulation"):
+        del st.session_state["strains"]
         st.rerun()
-    st.stop()
 
-col1, col2 = st.sidebar.columns(2)
-col1.metric("Bank", f"${round(st.session_state.credits, 2)}")
-col2.metric("Overhead", f"-${st.session_state.overhead}", delta_color="inverse")
+# Tabs
+tab1, tab2 = st.tabs(["🧬 Breeding Chamber", "📂 Strain Library"])
 
-st.sidebar.markdown("---")
-st.sidebar.metric("Current Breeding Cost", f"${st.session_state.breed_cost}")
-
-with st.sidebar.expander("🛠️ Shop"):
-    for item, data in SHOP_ITEMS.items():
-        if item in st.session_state.upgrades:
-            st.info(f"✅ {item}")
+with tab1:
+    st.subheader("New Project")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        p1_name = st.selectbox("Select Parent A (Pollen)", [s.name for s in st.session_state["strains"]], key="p1")
+    with col2:
+        p2_name = st.selectbox("Select Parent B (Receiver)", [s.name for s in st.session_state["strains"]], key="p2")
+        
+    new_name = st.text_input("Project Codename", value=f"Strain-{random.randint(100,999)}")
+    
+    if st.button("🧬 Initiate Crossbreed"):
+        if p1_name == p2_name:
+            st.error("Selfing increases mutation risks significantly! (Not implemented in v1)")
         else:
-            if st.button(f"{item} (${data['cost']})"):
-                if st.session_state.credits >= data['cost']:
-                    st.session_state.credits -= data['cost']
-                    st.session_state.upgrades.append(item)
-                    st.rerun()
-
-st.sidebar.markdown("---")
-st.sidebar.caption("Strain Library")
-
-# PREPARE DATA FOR SIDEBAR TABLE
-library_data = []
-for name, data in st.session_state.strains.items():
-    # Format terpenes into a readable string
-    t_str = ", ".join([f"{k}({v})" for k,v in data['terpenes'].items()]) if data['terpenes'] else "-"
-    library_data.append({
-        "Name": name,
-        "Pot": data['potency'],
-        "Yld": data['yield'],
-        "Terps": t_str
-    })
-
-st.sidebar.dataframe(
-    library_data,
-    use_container_width=True, 
-    hide_index=True
-)
-
-st.sidebar.markdown("---")
-st.sidebar.subheader(f"🧪 Terpenes ({len(st.session_state.discovered_terpenes)}/{len(TERPENE_INFO)})")
-for t_name in st.session_state.discovered_terpenes:
-    desc = TERPENE_INFO.get(t_name, "Unknown Effect")
-    st.sidebar.markdown(f"**{t_name}**: _{desc}_")
-
-# --- 5. MAIN UI ---
-st.title("Cultivar Labs")
-
-# === BREEDING ===
-if st.session_state.phase == "PLANNING":
-    cost = st.session_state.breed_cost
-    with st.expander(f"🧬 Genetics Lab (Breed - ${cost})", expanded=False):
-        if st.session_state.breeds_left > 0:
-            c1, c2 = st.columns(2)
-            p1 = c1.selectbox("Parent 1", list(st.session_state.strains.keys()))
-            p2 = c2.selectbox("Parent 2", list(st.session_state.strains.keys()))
-            new_name = st.text_input("New Name:")
+            # Fetch objects
+            parent_a = next(s for s in st.session_state["strains"] if s.name == p1_name)
+            parent_b = next(s for s in st.session_state["strains"] if s.name == p2_name)
             
-            if st.button(f"Breed Strain (${cost})"):
-                if new_name and st.session_state.credits >= cost:
-                    st.session_state.credits -= cost
-                    st.session_state.breeds_left -= 1
-                    st.session_state.breed_cost += 50 
-                    
-                    s1, s2 = st.session_state.strains[p1], st.session_state.strains[p2]
-                    new_terps = mix_terpenes(s1['terpenes'], s2['terpenes'])
-                    new_stats = {
-                        "potency": round((s1['potency']+s2['potency'])/2 + random.uniform(-1,2),1),
-                        "yield": round((s1['yield']+s2['yield'])/2 + random.uniform(-1,2),1),
-                        "resistance": round((s1['resistance']+s2['resistance'])/2, 1),
-                        "speed": round((s1['speed']+s2['speed'])/2, 1),
-                        "terpenes": new_terps
-                    }
-                    st.session_state.strains[new_name] = new_stats
-                    st.success(f"Bred {new_name}!")
-                    st.rerun()
-                elif st.session_state.credits < cost:
-                    st.error(f"Need ${cost}!")
-        else:
-            st.info("Breeding finished for this season.")
-
-# === PLOTS ===
-st.divider()
-st.subheader("🚜 Grow Operations")
-num_plots = 5 if "Auto-Trimmer" in st.session_state.upgrades else 4
-cols = st.columns(num_plots)
-
-if st.session_state.phase == "PLANNING":
-    selected_strains = []
-    for i, col in enumerate(cols):
-        with col:
-            st.markdown(f"**Plot {i+1}**")
-            choice = st.selectbox("Select", list(st.session_state.strains.keys()), key=f"p_{i}")
-            selected_strains.append(choice)
+            child = BreedingEngine.breed(parent_a, parent_b, new_name)
+            st.session_state["strains"].append(child)
             
-            # SHOW FULL STATS UNDER PLOT
-            s_data = st.session_state.strains[choice]
-            t_profile = s_data['terpenes']
-            t_str = ", ".join([f"{k}({v})" for k,v in t_profile.items()]) if t_profile else "None"
+            st.success(f"Successfully bred {child.name}!")
             
-            st.caption(f"**Potency:** {s_data['potency']} | **Yield:** {s_data['yield']}")
-            st.caption(f"🧬 {t_str}")
-
-    st.markdown("---")
-    
-    if st.button("🌱 START GROW SEASON", type="primary"):
-        # Progress Bar Simulation
-        progress_text = "Plants are growing... checking humidity... trimming leaves..."
-        my_bar = st.progress(0, text=progress_text)
-
-        for percent_complete in range(100):
-            time.sleep(0.04) 
-            my_bar.progress(percent_complete + 1, text=progress_text)
+            # Display Result Card
+            st.info("🔬 Lab Results Initialized")
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Est. Potency", child.get_tier(child.potency))
+            c2.metric("Growth Vigor", child.get_growth_tier())
+            c3.metric("Genetic Stability", f"{child.stability}/100")
             
-        my_bar.empty()
-        
-        results = run_grow_simulation(selected_strains)
-        st.session_state.plots_results = results
-        st.session_state.phase = "HARVEST"
-        st.rerun()
+            st.write("**Detected Traits:**")
+            if not child.revealed_traits:
+                st.write("*No traits identified yet. Grow out to reveal.*")
+            else:
+                for t_id in child.revealed_traits:
+                    t = TRAIT_DB[t_id]
+                    st.markdown(f"- **{t.name}**: {t.description}")
 
-elif st.session_state.phase == "HARVEST":
-    st.success("Harvest Ready!")
-    total_val = 0
+with tab2:
+    st.subheader("Strain Database")
     
-    # Display Plot Results
-    for i, col in enumerate(cols):
-        if i < len(st.session_state.plots_results):
-            res = st.session_state.plots_results[i]
-            total_val += res['value']
-            with col:
-                st.markdown(f"### Plot {i+1}")
-                st.info(f"**{res['strain']}**")
-                st.metric("Yield", f"{res['yield']} oz")
-                st.metric("Value", f"${res['value']}")
-                if res['terp_bonus'] > 0:
-                    st.caption(f"🌟 +${res['terp_bonus']} from Terpenes")
-
-    # FINANCIAL SUMMARY SECTION
-    st.markdown("---")
-    st.subheader("📊 Season Financials")
-    
-    overhead = st.session_state.overhead
-    net_profit = total_val - overhead
-    
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Gross Harvest", f"${total_val:.2f}")
-    m2.metric("Season Expenses", f"-${overhead:.2f}", delta_color="inverse")
-    m3.metric("Net Earnings", f"${net_profit:.2f}", delta=round(net_profit, 2))
-    
-    if st.button("💰 FINALIZE SEASON", type="primary"):
-        st.session_state.credits += total_val
-        reset_season(total_val)
-        st.rerun()
-
-
+    for strain in st.session_state["strains"]:
+        with st.expander(f"{strain.name} (Gen {strain.generation})"):
+            sc1, sc2 = st.columns([1, 2])
+            
+            with sc1:
+                st.caption("Morphology")
+                st.write(f"**Potency:** {strain.get_tier(strain.potency)}")
+                st.write(f"**Yield:** {strain.get_tier(strain.yield_amount)}")
+                st.write(f"**Hardiness:** {strain.get_tier(strain.hardiness)}")
+                st.progress(strain.stability / 100, text=f"Stability: {strain.stability}%")
+            
+            with sc2:
+                st.caption("Genetic Profile")
+                
+                # Traits Logic
+                if not strain.traits:
+                    st.write("No distinct traits.")
+                else:
+                    for t_id in strain.traits:
+                        trait_data = TRAIT_DB[t_id]
+                        # Visiblity Check
+                        if t_id in strain.revealed_traits:
+                            color = "green" if trait_data.effect_type == TraitEffect.POSITIVE else "red" if trait_data.effect_type == TraitEffect.NEGATIVE else "orange"
+                            st.markdown(f":{color}[**{trait_data.name}**] - *{trait_data.description}*")
+                        else:
+                            st.markdown(f"🔒 *Unsequenced Genetic Marker Detected*")
+                
+                st.caption(f"Lineage: {strain.parents}")
