@@ -39,7 +39,8 @@ UPGRADES_DB = {
     "hydro": {"name": "Hydroponic System", "cost": 2500, "desc": "+20% Yield on all harvests."},
     "hepa":  {"name": "HEPA Filtration", "cost": 1500, "desc": "Reduces pest/mold risk by 50%."},
     "seq":   {"name": "Genetic Sequencer", "cost": 4000, "desc": "Reveals hidden GENOTYPES."},
-    "brand": {"name": "Brand Marketing", "cost": 3000, "desc": "+15% Sale Price."}
+    "brand": {"name": "Brand Marketing", "cost": 3000, "desc": "+15% Sale Price."},
+    "room":  {"name": "Expand Facility", "cost": 5000, "desc": "Adds 1 Grow Room (Max 4)."}
 }
 
 # --- 2. DATA MODELS ---
@@ -51,10 +52,9 @@ class Batch:
     strain_name: str
     amount: int
     harvest_season: int
-    status: str  # "Fresh", "Curing", "Deep Curing", "Ready"
-    target_grade: str # "Standard", "Artisanal"
+    status: str  
+    target_grade: str 
     seasons_remaining: int
-
     def to_dict(self): return asdict(self)
     @staticmethod
     def from_dict(data): return Batch(**data)
@@ -71,8 +71,6 @@ class Strain:
     parent_ids: List[str] = field(default_factory=list)
     times_grown: int = 0
     is_sequenced: bool = False
-    
-    # Inventory Split
     stock_standard: int = 0
     stock_artisanal: int = 0
 
@@ -87,29 +85,33 @@ class Strain:
             base_pot -= 5
             base_yld += 20
         a_alleles = self.genetics.get("aroma", ("L", "L"))
-        if a_alleles[0] != a_alleles[1]:
-            base_pot += 5
+        if a_alleles[0] != a_alleles[1]: base_pot += 5
         self.potency = max(10, min(100, int(base_pot + random.uniform(-10, 10))))
         self.yield_amount = max(10, min(100, int(base_yld + random.uniform(-10, 10))))
 
     def get_aroma_label(self) -> str:
         alleles = sorted(self.genetics["aroma"])
         return FLAVOR_COMBOS.get(tuple(alleles), "Complex Hybrid")
-
     def get_structure_label(self) -> str:
-        if "T" in self.genetics["structure"]: return "Sativa (Tall)"
-        return "Indica (Short)"
-
+        return "Sativa (Tall)" if "T" in self.genetics["structure"] else "Indica (Short)"
     def get_growth_speed(self) -> int:
-        if "T" in self.genetics["structure"]: return 30
-        return 60
-
+        return 30 if "T" in self.genetics["structure"] else 60
     def to_dict(self): return asdict(self)
     @staticmethod
     def from_dict(data):
         s = Strain(**data)
         s.genetics = {k: tuple(v) for k, v in s.genetics.items()}
         return s
+
+@dataclass
+class GrowRoom:
+    id: int
+    strain_id: Optional[str] = None # None if empty
+    strain_name: Optional[str] = None
+    
+    def to_dict(self): return asdict(self)
+    @staticmethod
+    def from_dict(data): return GrowRoom(**data)
 
 # --- 3. LOGIC ENGINES ---
 
@@ -134,80 +136,83 @@ class BreedingEngine:
 class CuringEngine:
     @staticmethod
     def create_batch(strain: Strain, amount: int, season: int) -> Batch:
-        return Batch(
-            id=str(uuid.uuid4())[:8],
-            strain_id=strain.id,
-            strain_name=strain.name,
-            amount=amount,
-            harvest_season=season,
-            status="Fresh",
-            target_grade="Standard",
-            seasons_remaining=0
-        )
+        return Batch(id=str(uuid.uuid4())[:8], strain_id=strain.id, strain_name=strain.name, amount=amount, harvest_season=season, status="Fresh", target_grade="Standard", seasons_remaining=0)
 
     @staticmethod
     def process_batches(batches: List[Batch], strains: List[Strain]) -> List[str]:
-        """Advances time for all curing batches. Returns event logs."""
         events = []
-        finished_batches = []
-        
         for b in batches:
             if b.status in ["Curing", "Deep Curing"]:
                 b.seasons_remaining -= 1
-                
                 if b.seasons_remaining <= 0:
-                    # Finishing Logic
                     if b.status == "Deep Curing":
-                        # Risk Check for Artisanal
-                        if random.random() < 0.15: # 15% Rot Chance
-                            events.append(f"❌ Batch {b.id} ({b.strain_name}) rotted during deep cure! Lost {b.amount}g.")
+                        if random.random() < 0.15:
+                            events.append(f"❌ Batch {b.id} ({b.strain_name}) rotted! Lost {b.amount}g.")
                             b.status = "Destroyed"
                         else:
-                            # Success
                             target_strain = next(s for s in strains if s.id == b.strain_id)
                             target_strain.stock_artisanal += b.amount
-                            events.append(f"🏺 Batch {b.id} ({b.strain_name}) finished Deep Cure! +{b.amount}g Artisanal.")
+                            events.append(f"🏺 Batch {b.id} finished Deep Cure! +{b.amount}g Artisanal.")
                             b.status = "Finished"
                     else:
-                        # Standard Cure
                         target_strain = next(s for s in strains if s.id == b.strain_id)
                         target_strain.stock_standard += b.amount
-                        events.append(f"✅ Batch {b.id} ({b.strain_name}) finished curing. +{b.amount}g Standard.")
+                        events.append(f"✅ Batch {b.id} finished curing. +{b.amount}g Standard.")
                         b.status = "Finished"
-        
-        # Remove finished/destroyed batches from list
         st.session_state["batches"] = [b for b in batches if b.status not in ["Finished", "Destroyed"]]
         return events
 
-class GrowEngine:
+class FacilityEngine:
     @staticmethod
-    def calculate_cost(strain: Strain) -> int:
-        days = 100 - strain.get_growth_speed()
-        return 500 + (days * 12)
-
-    @staticmethod
-    def run_cycle(strain: Strain, current_funds: int, upgrades: List[str]):
-        cost = GrowEngine.calculate_cost(strain)
-        if current_funds < cost: return {"error": "Insufficient Funds"}
-
-        results = {"yield": 0, "events": [], "cost": cost}
-        base_yield = strain.yield_amount * 2.5 
-        variance = random.uniform(0.8, 1.2)
-        multiplier = 1.2 if "hydro" in upgrades else 1.0
-        final_yield = int(base_yield * variance * multiplier)
+    def run_facility(rooms: List[GrowRoom], strains: List[Strain], funds: int, upgrades: List[str], season: int):
+        occupied = [r for r in rooms if r.strain_id is not None]
+        if not occupied:
+            return {"error": "No active rooms."}
         
-        is_hardy = "R" in strain.genetics["resistance"]
-        base_risk = 0.05 if is_hardy else 0.30
-        if "hepa" in upgrades: base_risk /= 2
+        # Calculate Total Cost
+        total_cost = 0
+        cycle_results = []
         
-        if random.random() < base_risk:
-            loss = int(final_yield * 0.4)
-            final_yield -= loss
-            results["events"].append(f"⚠️ Stress Event! Lost {loss}g.")
+        for room in occupied:
+            strain = next(s for s in strains if s.id == room.strain_id)
+            # Cost based on Speed (Slower = More expensive per season/cycle)
+            days = 100 - strain.get_growth_speed()
+            cost = 500 + (days * 12)
+            total_cost += cost
+            
+            # Yield Calculation
+            base_yield = strain.yield_amount * 2.5 
+            variance = random.uniform(0.8, 1.2)
+            multiplier = 1.2 if "hydro" in upgrades else 1.0
+            final_yield = int(base_yield * variance * multiplier)
+            
+            # Events
+            event_msg = None
+            is_hardy = "R" in strain.genetics["resistance"]
+            base_risk = 0.05 if is_hardy else 0.30
+            if "hepa" in upgrades: base_risk /= 2
+            
+            if random.random() < base_risk:
+                loss = int(final_yield * 0.4)
+                final_yield -= loss
+                event_msg = f"⚠️ Room {room.id} ({strain.name}): Stress Event! Lost {loss}g."
 
-        results["yield"] = final_yield
-        strain.times_grown += 1
-        return results
+            strain.times_grown += 1
+            
+            cycle_results.append({
+                "room_id": room.id,
+                "strain": strain,
+                "yield": final_yield,
+                "event": event_msg
+            })
+
+        if funds < total_cost:
+            return {"error": f"Insufficient funds. Need ${total_cost} to run facility."}
+
+        return {
+            "cost": total_cost,
+            "results": cycle_results
+        }
 
 class MarketEngine:
     @staticmethod
@@ -224,11 +229,8 @@ class MarketEngine:
         val = base_price * (strain.potency / 50.0)
         if trending_code in strain.genetics["aroma"]: val *= 1.3 
         if strain.genetics["aroma"][0] == strain.genetics["aroma"][1]: val *= 1.1
-        
-        # Grade Modifiers
         if grade == "Fresh": val *= 0.7
         elif grade == "Artisanal": val *= 1.4
-            
         return round(val, 2)
 
 # --- 4. VISUALIZATION ---
@@ -253,7 +255,8 @@ def serialize_game_state():
         "season": st.session_state["season"],
         "upgrades": st.session_state["upgrades"],
         "strains": [s.to_dict() for s in st.session_state["strains"]],
-        "batches": [b.to_dict() for b in st.session_state["batches"]]
+        "batches": [b.to_dict() for b in st.session_state["batches"]],
+        "rooms": [r.to_dict() for r in st.session_state["rooms"]]
     }
     return json.dumps(data, indent=2)
 
@@ -265,6 +268,7 @@ def load_game_state(json_file):
         st.session_state["upgrades"] = data.get("upgrades", [])
         st.session_state["strains"] = [Strain.from_dict(s_data) for s_data in data["strains"]]
         st.session_state["batches"] = [Batch.from_dict(b) for b in data.get("batches", [])]
+        st.session_state["rooms"] = [GrowRoom.from_dict(r) for r in data.get("rooms", [])]
         return True
     except Exception as e:
         st.error(f"Error: {e}")
@@ -281,13 +285,14 @@ if "strains" not in st.session_state:
     s2.recalculate_stats()
     
     st.session_state["strains"] = [s1, s2]
-    st.session_state["batches"] = [] # New Batch Queue
+    st.session_state["batches"] = [] 
+    st.session_state["rooms"] = [GrowRoom(id=1)] # Start with 1 room
     st.session_state["season"] = 1
-    st.session_state["funds"] = 3000
+    st.session_state["funds"] = 5000 # Increased starting funds for facility management
     st.session_state["upgrades"] = []
 
 st.set_page_config(page_title="Cultivar Labs", layout="wide")
-st.title("🧬 Cultivar Labs: Curing Edition")
+st.title("🏭 Cultivar Labs: Facility Manager")
 st.markdown("---")
 
 base_price, trend_code, trend_name = MarketEngine.get_market_state(st.session_state["season"])
@@ -295,6 +300,7 @@ base_price, trend_code, trend_name = MarketEngine.get_market_state(st.session_st
 with st.sidebar:
     st.metric("Funds", f"${st.session_state['funds']:,}")
     st.metric("Season", st.session_state['season'])
+    st.metric("Rooms", f"{len(st.session_state['rooms'])}/4")
     st.info(f"📢 **Market Craze:**\n{trend_name} Strains")
     st.divider()
     st.download_button("💾 Save", serialize_game_state(), "save.json", "application/json")
@@ -305,135 +311,160 @@ with st.sidebar:
         st.session_state.clear()
         st.rerun()
 
-t1, t2, t3, t4, t5, t6 = st.tabs(["🌱 Grow", "🏺 Curing Room", "💰 Market", "🏗️ Store", "🧬 Breed", "📂 Library"])
+t1, t2, t3, t4, t5, t6 = st.tabs(["🏭 Facility", "🏺 Curing Room", "💰 Market", "🏗️ Store", "🧬 Breed", "📂 Library"])
 
 with t1:
-    st.subheader(f"Active Cultivation")
-    c1, c2 = st.columns([1, 2])
-    with c1:
-        choice = st.selectbox("Strain", [s.name for s in st.session_state["strains"]])
-        target = next(s for s in st.session_state["strains"] if s.name == choice)
-    with c2:
-        cost = GrowEngine.calculate_cost(target)
-        st.info(f"**Cost:** ${cost} | **Time:** {100 - target.get_growth_speed()} days")
-        
+    st.subheader(f"Grow Operations (Season {st.session_state['season']})")
+    
+    # Render Rooms
+    active_count = 0
+    total_est_cost = 0
+    
+    # Grid Layout for Rooms
+    cols = st.columns(4)
+    for i, room in enumerate(st.session_state["rooms"]):
+        with cols[i]:
+            with st.container(border=True):
+                st.write(f"**Room {room.id}**")
+                
+                if room.strain_id is None:
+                    # Empty State
+                    st.caption("Status: Empty")
+                    choice = st.selectbox(f"Assign Strain (R{room.id})", ["-"] + [s.name for s in st.session_state["strains"]], key=f"sel_{room.id}")
+                    if choice != "-":
+                        selected = next(s for s in st.session_state["strains"] if s.name == choice)
+                        if st.button(f"Assign", key=f"btn_{room.id}"):
+                            room.strain_id = selected.id
+                            room.strain_name = selected.name
+                            st.rerun()
+                else:
+                    # Occupied State
+                    st.info(f"Growing: **{room.strain_name}**")
+                    strain = next(s for s in st.session_state["strains"] if s.id == room.strain_id)
+                    days = 100 - strain.get_growth_speed()
+                    cost = 500 + (days * 12)
+                    st.caption(f"Cost: ${cost} | Risk: {'Low' if 'R' in strain.genetics['resistance'] else 'High'}")
+                    
+                    if st.button("Clear Room", key=f"clr_{room.id}"):
+                        room.strain_id = None
+                        room.strain_name = None
+                        st.rerun()
+                    
+                    active_count += 1
+                    total_est_cost += cost
+
     st.divider()
-    if st.button("🚀 Start Cycle (Advances Season)", type="primary", use_container_width=True):
-        res = GrowEngine.run_cycle(target, st.session_state["funds"], st.session_state["upgrades"])
-        if "error" in res: st.error(res["error"])
+    
+    # Global Controls
+    c1, c2 = st.columns([3, 1])
+    with c1:
+        if active_count == 0:
+            st.warning("Facility is idle. Assign strains to rooms to begin.")
         else:
-            st.session_state["funds"] -= res["cost"]
-            st.session_state["season"] += 1
+            st.success(f"Ready to run {active_count} room(s). Estimated Cost: ${total_est_cost}")
+    
+    with c2:
+        if st.button("🔴 RUN FACILITY", type="primary", disabled=(active_count==0), use_container_width=True):
+            report = FacilityEngine.run_facility(st.session_state["rooms"], st.session_state["strains"], st.session_state["funds"], st.session_state["upgrades"], st.session_state["season"])
             
-            # Create Batch instead of direct inventory
-            new_batch = CuringEngine.create_batch(target, res["yield"], st.session_state["season"])
-            st.session_state["batches"].append(new_batch)
-            
-            # Process Aging Batches
-            logs = CuringEngine.process_batches(st.session_state["batches"], st.session_state["strains"])
-            
-            st.success("Harvest Complete! Batch moved to Curing Room.")
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Yield", f"{res['yield']}g")
-            c2.metric("Funds", f"${st.session_state['funds']}")
-            
-            for e in res["events"]: st.error(e)
-            for l in logs: st.info(l)
+            if "error" in report:
+                st.error(report["error"])
+            else:
+                # Update Global State
+                st.session_state["funds"] -= report["cost"]
+                st.session_state["season"] += 1
+                
+                # Process Results
+                for res in report["results"]:
+                    # Create Batch
+                    new_batch = CuringEngine.create_batch(res["strain"], res["yield"], st.session_state["season"])
+                    st.session_state["batches"].append(new_batch)
+                    
+                    # Clear Room
+                    room_obj = next(r for r in st.session_state["rooms"] if r.id == res["room_id"])
+                    room_obj.strain_id = None
+                    room_obj.strain_name = None
+                    
+                    # Logs
+                    st.toast(f"Room {res['room_id']}: Harvested {res['yield']}g of {res['strain'].name}")
+                    if res["event"]: st.error(res["event"])
+
+                # Advance Curing
+                cure_logs = CuringEngine.process_batches(st.session_state["batches"], st.session_state["strains"])
+                for l in cure_logs: st.info(l)
+                
+                st.rerun()
 
 with t2:
     st.subheader("Curing & Drying")
-    
-    # 1. Fresh Batches (Decisions needed)
-    st.markdown("### 🌿 Fresh Harvests (Action Required)")
     fresh_batches = [b for b in st.session_state["batches"] if b.status == "Fresh"]
     
-    if not fresh_batches:
-        st.caption("No fresh harvests waiting.")
-    else:
+    if fresh_batches:
+        st.markdown("### 🌿 Fresh Harvests")
         for b in fresh_batches:
             with st.container(border=True):
                 c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
                 c1.write(f"**{b.strain_name}** ({b.amount}g)")
-                
-                # Option A: Sell Now
                 val_fresh = MarketEngine.calculate_value(base_price, next(s for s in st.session_state["strains"] if s.id == b.strain_id), trend_code, "Fresh")
                 if c2.button(f"Sell Fresh (${int(b.amount * val_fresh)})", key=f"sf_{b.id}"):
                     st.session_state["funds"] += int(b.amount * val_fresh)
                     st.session_state["batches"].remove(b)
                     st.rerun()
-                
-                # Option B: Standard Cure
-                if c3.button("Jar Cure (1 Season)", key=f"jc_{b.id}"):
+                if c3.button("Jar Cure (1 S)", key=f"jc_{b.id}"):
                     b.status = "Curing"
                     b.seasons_remaining = 1
                     st.rerun()
-                    
-                # Option C: Deep Cure
-                if c4.button("Deep Cure (2 Seasons)", key=f"dc_{b.id}", help="Higher Value, Risk of Mold"):
+                if c4.button("Deep Cure (2 S)", key=f"dc_{b.id}"):
                     b.status = "Deep Curing"
                     b.seasons_remaining = 2
                     st.rerun()
 
-    st.divider()
-    
-    # 2. Aging Batches (Progress)
     st.markdown("### ⏳ In Progress")
     aging_batches = [b for b in st.session_state["batches"] if b.status in ["Curing", "Deep Curing"]]
-    
-    if not aging_batches:
-        st.caption("The curing shelves are empty.")
-    else:
-        for b in aging_batches:
-            status_icon = "🏺" if b.status == "Curing" else "⚱️"
-            st.info(f"{status_icon} **{b.strain_name}** | {b.amount}g | Ready in {b.seasons_remaining} season(s)")
+    for b in aging_batches:
+        st.info(f"{'🏺' if b.status == 'Curing' else '⚱️'} **{b.strain_name}** | {b.amount}g | Ready in {b.seasons_remaining}")
 
 with t3:
     st.subheader("Marketplace")
     st.markdown(f"Craze: **{trend_name}** | Base: **${round(base_price,2)}/g**")
-    
-    st.markdown("#### Ready Inventory")
-    has_stock = False
-    
     for s in st.session_state["strains"]:
-        # Standard Stock
-        if s.stock_standard > 0:
-            has_stock = True
-            val = MarketEngine.calculate_value(base_price, s, trend_code, "Standard")
+        if s.stock_standard > 0 or s.stock_artisanal > 0:
             with st.container(border=True):
-                c1, c2 = st.columns([3, 1])
-                c1.write(f"**{s.name}** (Standard)")
-                if c2.button(f"Sell {s.stock_standard}g (${int(s.stock_standard * val)})", key=f"sell_std_{s.id}"):
-                    st.session_state["funds"] += int(s.stock_standard * val)
-                    s.stock_standard = 0
-                    st.rerun()
-                    
-        # Artisanal Stock
-        if s.stock_artisanal > 0:
-            has_stock = True
-            val = MarketEngine.calculate_value(base_price, s, trend_code, "Artisanal")
-            with st.container(border=True):
-                c1, c2 = st.columns([3, 1])
-                c1.write(f"⭐ **{s.name}** (Artisanal)")
-                if c2.button(f"Sell {s.stock_artisanal}g (${int(s.stock_artisanal * val)})", key=f"sell_art_{s.id}"):
-                    st.session_state["funds"] += int(s.stock_artisanal * val)
-                    s.stock_artisanal = 0
-                    st.rerun()
-
-    if not has_stock:
-        st.info("No finished product in the vault. Check the Curing Room.")
+                st.write(f"**{s.name}**")
+                c1, c2 = st.columns(2)
+                if s.stock_standard > 0:
+                    val = MarketEngine.calculate_value(base_price, s, trend_code, "Standard")
+                    c1.button(f"Sell {s.stock_standard}g Std (${int(s.stock_standard * val)})", key=f"sstd_{s.id}", on_click=lambda s=s, v=val: (setattr(s, 'stock_standard', 0), setattr(st.session_state, 'funds', st.session_state['funds'] + int(s.stock_standard * v))))
+                if s.stock_artisanal > 0:
+                    val = MarketEngine.calculate_value(base_price, s, trend_code, "Artisanal")
+                    c2.button(f"Sell {s.stock_artisanal}g Art (${int(s.stock_artisanal * val)})", key=f"sart_{s.id}", on_click=lambda s=s, v=val: (setattr(s, 'stock_artisanal', 0), setattr(st.session_state, 'funds', st.session_state['funds'] + int(s.stock_artisanal * v))))
 
 with t4:
-    st.subheader("Upgrades")
+    st.subheader("Upgrades & Expansion")
     for uid, data in UPGRADES_DB.items():
         c1, c2 = st.columns([3, 1])
         c1.markdown(f"**{data['name']}** - {data['desc']}")
-        if uid in st.session_state["upgrades"]: c2.success("Owned")
+        
+        if uid == "room":
+            current_rooms = len(st.session_state["rooms"])
+            if current_rooms >= 4:
+                c2.success("Max Capacity")
+            else:
+                if c2.button(f"Buy Room ({current_rooms+1}/4) - ${data['cost']}"):
+                    if st.session_state["funds"] >= data['cost']:
+                        st.session_state["funds"] -= data['cost']
+                        st.session_state["rooms"].append(GrowRoom(id=current_rooms + 1))
+                        st.rerun()
+                    else:
+                        st.error("No Funds")
         else:
-            if c2.button(f"Buy (${data['cost']})", key=uid):
-                if st.session_state["funds"] >= data['cost']:
-                    st.session_state["funds"] -= data['cost']
-                    st.session_state["upgrades"].append(uid)
-                    st.rerun()
+            if uid in st.session_state["upgrades"]: c2.success("Owned")
+            else:
+                if c2.button(f"Buy (${data['cost']})", key=uid):
+                    if st.session_state["funds"] >= data['cost']:
+                        st.session_state["funds"] -= data['cost']
+                        st.session_state["upgrades"].append(uid)
+                        st.rerun()
 
 with t5:
     st.subheader("Breeding Lab")
@@ -455,12 +486,10 @@ with t6:
     st.subheader("Strain Library")
     sel_name = st.selectbox("Select Strain", [s.name for s in st.session_state["strains"]])
     sel = next(s for s in st.session_state["strains"] if s.name == sel_name)
-    
     c1, c2 = st.columns(2)
     with c1:
         st.write(f"**Profile:** {sel.get_aroma_label()}")
         st.write(f"**Inventory:** {sel.stock_standard}g Std / {sel.stock_artisanal}g Art")
-        st.caption("Genetics:")
         if "seq" in st.session_state["upgrades"] or sel.is_sequenced:
              st.write(f"- Aroma: `{sel.genetics['aroma']}`")
              st.write(f"- Structure: `{sel.genetics['structure']}`")
@@ -468,5 +497,4 @@ with t6:
         else:
             st.write("🔒 Sequence Hidden")
     with c2:
-        st.caption("Ancestry Log")
         st.code(get_lineage_text(sel, st.session_state["strains"]), language="text")
