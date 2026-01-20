@@ -1,25 +1,26 @@
 import streamlit as st
 import random
 import uuid
+import json
 from enum import Enum
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from typing import List, Dict, Optional
 
 # --- 1. CONFIGURATION & ENUMS ---
 
-class TraitCategory(Enum):
+class TraitCategory(str, Enum):
     CHEMICAL = "Chemical Profile"
     GROWTH = "Growth Behavior"
     MARKET = "Market/Consumer"
     AESTHETIC = "Aesthetic/Flavor"
     NEGATIVE = "Negative/Quirk"
 
-class TraitEffect(Enum):
+class TraitEffect(str, Enum):
     POSITIVE = "Positive"
     NEGATIVE = "Negative"
     MIXED = "Mixed"
 
-class Rarity(Enum):
+class Rarity(str, Enum):
     COMMON = "Common"
     UNCOMMON = "Uncommon"
     RARE = "Rare"
@@ -45,7 +46,7 @@ class Strain:
     # Core Stats (0-100)
     potency: int = 50
     yield_amount: int = 50
-    growth_speed: int = 50  # Higher = Faster
+    growth_speed: int = 50 
     stability: int = 50
     hardiness: int = 50
     
@@ -69,6 +70,13 @@ class Strain:
         if self.growth_speed < 30: return "Sluggish"
         if self.growth_speed < 60: return "Standard"
         return "Vigorous"
+
+    def to_dict(self):
+        return asdict(self)
+
+    @staticmethod
+    def from_dict(data):
+        return Strain(**data)
 
 # --- 3. TRAIT DATABASE ---
 TRAIT_DB = {
@@ -190,7 +198,6 @@ class GrowEngine:
 class MarketEngine:
     @staticmethod
     def get_market_price():
-        # Base price per gram fluctuates between $3 and $8
         base = random.uniform(3.0, 8.0)
         trend = random.choice(["Stable", "Boom", "Crash"])
         
@@ -201,7 +208,33 @@ class MarketEngine:
             
         return round(base, 2), trend
 
-# --- 5. UI & STATE MANAGEMENT ---
+# --- 5. SYSTEM FUNCTIONS (SAVE/LOAD) ---
+
+def serialize_game_state():
+    """Convert session state to a JSON string."""
+    data = {
+        "funds": st.session_state["funds"],
+        "inventory": st.session_state["inventory"],
+        "season": st.session_state["season"],
+        "strains": [s.to_dict() for s in st.session_state["strains"]]
+    }
+    return json.dumps(data, indent=2)
+
+def load_game_state(json_file):
+    """Parse JSON and populate session state."""
+    try:
+        data = json.load(json_file)
+        st.session_state["funds"] = data["funds"]
+        st.session_state["inventory"] = data["inventory"]
+        st.session_state["season"] = data["season"]
+        # Reconstruct Strain objects
+        st.session_state["strains"] = [Strain.from_dict(s_data) for s_data in data["strains"]]
+        return True
+    except Exception as e:
+        st.error(f"Corrupt save file: {e}")
+        return False
+
+# --- 6. UI & STATE MANAGEMENT ---
 
 if "strains" not in st.session_state:
     s1 = Strain(name="Highland Thai", potency=75, yield_amount=40, growth_speed=30, stability=80)
@@ -215,7 +248,7 @@ if "strains" not in st.session_state:
     st.session_state["strains"] = [s1, s2]
     st.session_state["season"] = 1
     st.session_state["inventory"] = 0 
-    st.session_state["funds"] = 5000  # Starting Cash
+    st.session_state["funds"] = 5000 
 
 st.set_page_config(page_title="Cultivar Labs", layout="wide")
 
@@ -224,12 +257,35 @@ st.markdown("---")
 
 # Sidebar
 with st.sidebar:
+    st.header("Lab Status")
     st.metric("Funds", f"${st.session_state['funds']:,}")
     st.metric("Inventory", f"{st.session_state['inventory']}g")
     st.metric("Season", st.session_state['season'])
     
     st.divider()
-    if st.button("Reset Simulation"):
+    
+    # SAVE SYSTEM
+    st.subheader("System")
+    
+    # 1. Download (Save)
+    json_str = serialize_game_state()
+    st.download_button(
+        label="💾 Save Game (JSON)",
+        data=json_str,
+        file_name="cultivar_save.json",
+        mime="application/json"
+    )
+    
+    # 2. Upload (Load)
+    uploaded_file = st.file_uploader("📂 Load Game", type=["json"])
+    if uploaded_file is not None:
+        if st.button("Confirm Load"):
+            if load_game_state(uploaded_file):
+                st.success("Game Loaded!")
+                st.rerun()
+
+    st.divider()
+    if st.button("Reset Simulation", type="secondary"):
         st.session_state.clear()
         st.rerun()
 
@@ -247,11 +303,9 @@ with tab1:
         target_strain = next(s for s in st.session_state["strains"] if s.name == grow_choice)
         
     with col2:
-        # Display Est Cost
         est_cost = GrowEngine.calculate_cost(target_strain)
         st.info(f"**Operational Cost:** ${est_cost} | **Est. Time:** {100 - target_strain.growth_speed} days")
         
-    # Button outside columns
     st.divider()
     if st.button("🚀 Start Grow Cycle", type="primary", use_container_width=True):
         report = GrowEngine.run_cycle(target_strain, st.session_state["funds"])
@@ -259,14 +313,12 @@ with tab1:
         if "error" in report:
             st.error(f"Cannot start grow: {report['error']}")
         else:
-            # Update State
             st.session_state["funds"] -= report["cost"]
             st.session_state["season"] += 1
             st.session_state["inventory"] += report["yield"]
             
             st.success("Harvest Complete!")
             
-            # Display Metrics
             m1, m2, m3 = st.columns(3)
             m1.metric("Yield", f"{report['yield']}g")
             m2.metric("Op Cost", f"-${report['cost']}")
@@ -293,14 +345,13 @@ with tab2:
     
     st.divider()
     
-    # FIXED LOGIC HERE: Only show slider if inventory > 0
     if st.session_state['inventory'] > 0:
         sc1, sc2 = st.columns([2, 1])
         with sc1:
             sell_amount = st.slider("Amount to Sell (g)", 0, st.session_state['inventory'], st.session_state['inventory'])
         
         with sc2:
-            st.write("##") # spacer
+            st.write("##") 
             if st.button("Sell Inventory"):
                 revenue = int(sell_amount * price)
                 st.session_state["funds"] += revenue
