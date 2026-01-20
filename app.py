@@ -6,13 +6,6 @@ from enum import Enum
 from dataclasses import dataclass, field, asdict
 from typing import List, Dict, Optional, Tuple
 
-# --- SAFE IMPORT FOR GRAPHVIZ ---
-try:
-    import graphviz
-    HAS_GRAPHVIZ = True
-except ImportError:
-    HAS_GRAPHVIZ = False
-
 # --- 1. CONFIGURATION & ENUMS ---
 
 class GeneType(str, Enum):
@@ -198,44 +191,33 @@ class MarketEngine:
         quality_mod = (strain.potency / 50.0) * aroma_bonus
         return round(base_price * quality_mod, 2)
 
-# --- 5. VISUALIZATION ENGINE ---
+# --- 5. TEXT VISUALIZATION ENGINE ---
 
-def render_lineage(target_strain: Strain, all_strains: List[Strain]):
-    """Safe rendering: Returns GraphViz object OR None if missing."""
-    if not HAS_GRAPHVIZ:
-        return None
-
-    try:
-        graph = graphviz.Digraph()
-        graph.attr(rankdir='TB') 
-        
-        strain_map = {s.id: s for s in all_strains}
-        visited = set()
-        queue = [target_strain]
-        
-        graph.node(target_strain.id, label=f"{target_strain.name}\n(Gen {target_strain.generation})", shape="box", style="filled", fillcolor="lightblue")
-        visited.add(target_strain.id)
-
-        while queue:
-            current = queue.pop(0)
-            if current.parent_ids:
-                for pid in current.parent_ids:
-                    if pid in strain_map:
-                        parent = strain_map[pid]
-                        if pid not in visited:
-                            graph.node(pid, label=f"{parent.name}\n(Gen {parent.generation})")
-                            visited.add(pid)
-                            queue.append(parent)
-                        graph.edge(pid, current.id)
-                    else:
-                        unknown_id = f"unknown_{pid}"
-                        if unknown_id not in visited:
-                            graph.node(unknown_id, label="Archived", style="dashed")
-                            visited.add(unknown_id)
-                        graph.edge(unknown_id, current.id)
-        return graph
-    except Exception:
-        return None
+def get_lineage_text(target_strain: Strain, all_strains: List[Strain], depth=0, max_depth=3) -> str:
+    """Recursively builds an ASCII tree string."""
+    indent = "    " * depth
+    prefix = "└── " if depth > 0 else ""
+    
+    # Base info
+    tree_str = f"{indent}{prefix}{target_strain.name} (Gen {target_strain.generation})\n"
+    
+    if depth >= max_depth:
+        return tree_str
+    
+    # Lookup
+    strain_map = {s.id: s for s in all_strains}
+    
+    if target_strain.parent_ids:
+        # We only show parents if we haven't hit max depth
+        for pid in target_strain.parent_ids:
+            if pid in strain_map:
+                parent = strain_map[pid]
+                tree_str += get_lineage_text(parent, all_strains, depth + 1, max_depth)
+            else:
+                # Parent deleted or unknown
+                tree_str += f"{indent}    └── [Unknown Ancestor]\n"
+                
+    return tree_str
 
 # --- 6. STATE & UI ---
 
@@ -373,7 +355,6 @@ with t4:
 with t5:
     st.subheader("Strain Library")
     
-    # Selection for Visualization
     all_names = [s.name for s in st.session_state["strains"]]
     selected_name = st.selectbox("Select Strain to Inspect", all_names)
     selected_strain = next(s for s in st.session_state["strains"] if s.name == selected_name)
@@ -391,23 +372,7 @@ with t5:
             st.write("🔒 Sequence Hidden")
 
     with c2:
-        st.caption("Ancestry Tree")
-        
-        # SAFE GRAPHVIZ CHECK
-        if HAS_GRAPHVIZ:
-            graph = render_lineage(selected_strain, st.session_state["strains"])
-            if graph:
-                try:
-                    st.graphviz_chart(graph)
-                except Exception as e:
-                    st.error("Graphviz binary missing. Displaying text fallback.")
-                    st.text(f"Lineage: {selected_strain.parents_text}")
-            else:
-                 st.text("No ancestry data available.")
-        else:
-            # TEXT FALLBACK
-            st.warning("Graphviz library not found. Showing text mode.")
-            st.info(f"**Immediate Parents:**\n{selected_strain.parents_text}")
-            
-            if selected_strain.parent_ids:
-                 st.write("Grandparents are in the database but cannot be visualized without Graphviz.")
+        st.caption("Ancestry Log")
+        # Text-Based Visualization
+        lineage_txt = get_lineage_text(selected_strain, st.session_state["strains"], depth=0)
+        st.code(lineage_txt, language="text")
