@@ -139,8 +139,6 @@ class BreedingEngine:
 class GrowEngine:
     @staticmethod
     def calculate_cost(strain: Strain) -> int:
-        # Slower growing strains cost more to run (more electricity/nutrients)
-        # Base cost $500 + ($10 * (100 - speed))
         days_to_harvest = 100 - strain.growth_speed
         return 500 + (days_to_harvest * 10)
 
@@ -206,7 +204,6 @@ class MarketEngine:
 # --- 5. UI & STATE MANAGEMENT ---
 
 if "strains" not in st.session_state:
-    # Initial State
     s1 = Strain(name="Highland Thai", potency=75, yield_amount=40, growth_speed=30, stability=80)
     s1.traits = ["grow_tall", "chem_limonene"]
     s1.revealed_traits = ["grow_tall"]
@@ -249,35 +246,39 @@ with tab1:
         grow_choice = st.selectbox("Select Mother Strain", [s.name for s in st.session_state["strains"]])
         target_strain = next(s for s in st.session_state["strains"] if s.name == grow_choice)
         
+    with col2:
         # Display Est Cost
         est_cost = GrowEngine.calculate_cost(target_strain)
-        st.write(f"**Operational Cost:** ${est_cost}")
+        st.info(f"**Operational Cost:** ${est_cost} | **Est. Time:** {100 - target_strain.growth_speed} days")
         
-    with col2:
-        if st.button("🚀 Start Grow Cycle", type="primary"):
-            report = GrowEngine.run_cycle(target_strain, st.session_state["funds"])
+    # Button moved outside of columns to prevent nesting error
+    st.divider()
+    if st.button("🚀 Start Grow Cycle", type="primary", use_container_width=True):
+        report = GrowEngine.run_cycle(target_strain, st.session_state["funds"])
+        
+        if "error" in report:
+            st.error(f"Cannot start grow: {report['error']}")
+        else:
+            # Update State
+            st.session_state["funds"] -= report["cost"]
+            st.session_state["season"] += 1
+            st.session_state["inventory"] += report["yield"]
             
-            if "error" in report:
-                st.error(f"Cannot start grow: {report['error']}")
-            else:
-                # Update State
-                st.session_state["funds"] -= report["cost"]
-                st.session_state["season"] += 1
-                st.session_state["inventory"] += report["yield"]
-                
-                st.success("Harvest Complete!")
-                m1, m2, m3 = st.columns(3)
-                m1.metric("Yield", f"{report['yield']}g")
-                m2.metric("Op Cost", f"-${report['cost']}")
-                m3.metric("Net Funds", f"${st.session_state['funds']}")
-                
-                if report["new_discoveries"]:
-                    for disc in report["new_discoveries"]:
-                        st.warning(f"**New Trait Identified:** {disc}")
-                
-                if report["events"]:
-                    for evt in report["events"]:
-                        st.error(evt)
+            st.success("Harvest Complete!")
+            
+            # Display Metrics Safe from Nesting
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Yield", f"{report['yield']}g")
+            m2.metric("Op Cost", f"-${report['cost']}")
+            m3.metric("Net Funds", f"${st.session_state['funds']}")
+            
+            if report["new_discoveries"]:
+                for disc in report["new_discoveries"]:
+                    st.warning(f"**New Trait Identified:** {disc}")
+            
+            if report["events"]:
+                for evt in report["events"]:
+                    st.error(evt)
 
 # --- TAB 2: MARKETPLACE ---
 with tab2:
