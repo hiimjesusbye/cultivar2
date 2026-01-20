@@ -4,7 +4,7 @@ import json
 import time
 
 # --- 1. CONFIGURATION & DATA ---
-st.set_page_config(page_title="Cannabis Tycoon: Hard Mode", page_icon="🌿", layout="wide")
+st.set_page_config(page_title="Cultivar Labs", page_icon="🌿", layout="wide")
 
 SHOP_ITEMS = {
     "LED Grow Lights": {"cost": 200, "desc": "+20% Yield on all harvests"},
@@ -280,3 +280,4 @@ elif st.session_state.phase == "HARVEST":
         st.session_state.credits += total_val
         reset_season(total_val)
         st.rerun()
+
