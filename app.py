@@ -2,10 +2,16 @@ import streamlit as st
 import random
 import uuid
 import json
-import graphviz
 from enum import Enum
 from dataclasses import dataclass, field, asdict
 from typing import List, Dict, Optional, Tuple
+
+# --- SAFE IMPORT FOR GRAPHVIZ ---
+try:
+    import graphviz
+    HAS_GRAPHVIZ = True
+except ImportError:
+    HAS_GRAPHVIZ = False
 
 # --- 1. CONFIGURATION & ENUMS ---
 
@@ -75,8 +81,8 @@ class Strain:
     
     # Metadata
     generation: int = 1
-    parents_text: str = "Unknown"      # Human readable
-    parent_ids: List[str] = field(default_factory=list) # Machine readable lineage
+    parents_text: str = "Unknown"
+    parent_ids: List[str] = field(default_factory=list)
     
     times_grown: int = 0
     inventory_amount: int = 0
@@ -192,51 +198,44 @@ class MarketEngine:
         quality_mod = (strain.potency / 50.0) * aroma_bonus
         return round(base_price * quality_mod, 2)
 
-# --- 5. VISUALIZATION ENGINE (NEW) ---
+# --- 5. VISUALIZATION ENGINE ---
 
 def render_lineage(target_strain: Strain, all_strains: List[Strain]):
-    """Generates a GraphViz chart for the strain's family tree."""
-    graph = graphviz.Digraph()
-    graph.attr(rankdir='BT') # Bottom to Top (Child at top? No, let's do Top Down)
-    graph.attr(rankdir='TB') 
-    
-    # Create a lookup for all strains by ID
-    strain_map = {s.id: s for s in all_strains}
-    
-    # Set of visited IDs to avoid loops (though strict DAG shouldn't loop)
-    visited = set()
-    queue = [target_strain]
-    
-    # Add target node
-    graph.node(target_strain.id, label=f"{target_strain.name}\n(Gen {target_strain.generation})", shape="box", style="filled", fillcolor="lightblue")
-    visited.add(target_strain.id)
+    """Safe rendering: Returns GraphViz object OR None if missing."""
+    if not HAS_GRAPHVIZ:
+        return None
 
-    while queue:
-        current = queue.pop(0)
+    try:
+        graph = graphviz.Digraph()
+        graph.attr(rankdir='TB') 
         
-        # If this strain has parents recorded
-        if current.parent_ids:
-            for pid in current.parent_ids:
-                if pid in strain_map:
-                    parent = strain_map[pid]
-                    
-                    # Add Parent Node if not exists
-                    if pid not in visited:
-                        graph.node(pid, label=f"{parent.name}\n(Gen {parent.generation})")
-                        visited.add(pid)
-                        queue.append(parent)
-                    
-                    # Add Edge: Parent -> Child
-                    graph.edge(pid, current.id)
-                else:
-                    # Parent might be deleted or from lost history
-                    unknown_id = f"unknown_{pid}"
-                    if unknown_id not in visited:
-                        graph.node(unknown_id, label="Archived Strain", style="dashed")
-                        visited.add(unknown_id)
-                    graph.edge(unknown_id, current.id)
-                    
-    return graph
+        strain_map = {s.id: s for s in all_strains}
+        visited = set()
+        queue = [target_strain]
+        
+        graph.node(target_strain.id, label=f"{target_strain.name}\n(Gen {target_strain.generation})", shape="box", style="filled", fillcolor="lightblue")
+        visited.add(target_strain.id)
+
+        while queue:
+            current = queue.pop(0)
+            if current.parent_ids:
+                for pid in current.parent_ids:
+                    if pid in strain_map:
+                        parent = strain_map[pid]
+                        if pid not in visited:
+                            graph.node(pid, label=f"{parent.name}\n(Gen {parent.generation})")
+                            visited.add(pid)
+                            queue.append(parent)
+                        graph.edge(pid, current.id)
+                    else:
+                        unknown_id = f"unknown_{pid}"
+                        if unknown_id not in visited:
+                            graph.node(unknown_id, label="Archived", style="dashed")
+                            visited.add(unknown_id)
+                        graph.edge(unknown_id, current.id)
+        return graph
+    except Exception:
+        return None
 
 # --- 6. STATE & UI ---
 
@@ -262,7 +261,6 @@ def load_game_state(json_file):
         return False
 
 if "strains" not in st.session_state:
-    # Starters
     s1 = Strain(name="Highland Gold")
     s1.genetics = {"structure": ("T", "T"), "aroma": ("L", "L"), "resistance": ("r", "r")} 
     s1.recalculate_stats()
@@ -380,13 +378,11 @@ with t5:
     selected_name = st.selectbox("Select Strain to Inspect", all_names)
     selected_strain = next(s for s in st.session_state["strains"] if s.name == selected_name)
     
-    # 1. Stats Block
     c1, c2 = st.columns(2)
     with c1:
         st.write(f"**Generation:** {selected_strain.generation}")
         st.write(f"**Potency:** {selected_strain.potency}")
         st.write(f"**Yield:** {selected_strain.yield_amount}")
-        
         st.caption("Genetics:")
         if "seq" in st.session_state["upgrades"] or selected_strain.is_sequenced:
              for k, v in selected_strain.genetics.items():
@@ -394,12 +390,24 @@ with t5:
         else:
             st.write("🔒 Sequence Hidden")
 
-    # 2. Lineage Chart (The New Feature!)
     with c2:
         st.caption("Ancestry Tree")
-        try:
-            # We use st.graphviz_chart to render the Dot object
+        
+        # SAFE GRAPHVIZ CHECK
+        if HAS_GRAPHVIZ:
             graph = render_lineage(selected_strain, st.session_state["strains"])
-            st.graphviz_chart(graph)
-        except Exception as e:
-            st.error(f"Could not render chart. (Do you have Graphviz installed?)\nError: {e}")
+            if graph:
+                try:
+                    st.graphviz_chart(graph)
+                except Exception as e:
+                    st.error("Graphviz binary missing. Displaying text fallback.")
+                    st.text(f"Lineage: {selected_strain.parents_text}")
+            else:
+                 st.text("No ancestry data available.")
+        else:
+            # TEXT FALLBACK
+            st.warning("Graphviz library not found. Showing text mode.")
+            st.info(f"**Immediate Parents:**\n{selected_strain.parents_text}")
+            
+            if selected_strain.parent_ids:
+                 st.write("Grandparents are in the database but cannot be visualized without Graphviz.")
