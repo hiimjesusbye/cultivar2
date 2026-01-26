@@ -4,7 +4,7 @@ import json
 import time
 
 # --- 1. CONFIGURATION & DATA ---
-st.set_page_config(page_title="Cannabis Tycoon: Strategy Mode", page_icon="🌿", layout="wide")
+st.set_page_config(page_title="Cannabis Tycoon: Ultimate Mode", page_icon="🌿", layout="wide")
 
 SHOP_ITEMS = {
     "LED Grow Lights": {"cost": 200, "desc": "+20% Yield on all harvests"},
@@ -23,12 +23,12 @@ TERPENE_INFO = {
     "Ocimene": "Sweet / Decongestant"
 }
 
-# WEATHER SYSTEM DEFINITIONS
+# WEATHER PATTERNS
 WEATHER_PATTERNS = {
     "Sunny & Mild": {
         "desc": "Perfect growing conditions. No penalties.",
         "min_resist": 0,
-        "penalty_factor": 1.0, # No penalty
+        "penalty_factor": 1.0, 
         "icon": "☀️"
     },
     "Heat Wave": {
@@ -61,13 +61,13 @@ WEATHER_PATTERNS = {
 default_state = {
     "credits": 100,
     "season": 1,
-    "overhead": 50,
-    "breed_cost": 50,
+    "overhead": 50,     # Starts at 50, doubles each season
+    "breed_cost": 50,   # Starts at 50, increases by 50 each breed
     "breeds_left": 1,
     "phase": "PLANNING", 
     "plots_results": [],
     "discovered_terpenes": ["Myrcene", "Limonene"],
-    "current_weather": "Sunny & Mild", # Default weather
+    "current_weather": "Sunny & Mild",
     "strains": {
         "Industrial Hemp": {
             "potency": 2, "yield": 10, "resistance": 8, "speed": 4, 
@@ -98,6 +98,7 @@ def mix_terpenes(t1, t2):
         final_val = round(base + random.uniform(-1.5, 1.5), 1)
         if final_val > 0.5: new_terps[key] = final_val
 
+    # Mutation Chance
     mutation_chance = 0.2 + (len(new_terps) * 0.05)
     if random.random() < mutation_chance:
         possible_new = [t for t in TERPENE_INFO.keys() if t not in new_terps]
@@ -153,12 +154,15 @@ def reset_season(profit):
     if st.session_state.credits >= cost:
         st.session_state.credits -= cost
         st.session_state.season += 1
+        
+        # HARD MODE: Expenses Double
         st.session_state.overhead *= 2 
+        
         st.session_state.breeds_left = 1
         st.session_state.phase = "PLANNING"
         st.session_state.plots_results = []
         
-        # NEW: Randomize Weather for Next Season
+        # Randomize Weather for Next Season
         st.session_state.current_weather = random.choice(list(WEATHER_PATTERNS.keys()))
         
         st.success("Season Complete!")
@@ -180,7 +184,8 @@ col1.metric("Bank", f"${round(st.session_state.credits, 2)}")
 col2.metric("Overhead", f"-${st.session_state.overhead}", delta_color="inverse")
 
 st.sidebar.markdown("---")
-st.sidebar.metric("Current Breeding Cost", f"${st.session_state.breed_cost}")
+# Show dynamic breeding cost
+st.sidebar.metric("Breeding Cost", f"${st.session_state.breed_cost}")
 
 with st.sidebar.expander("🛠️ Shop"):
     for item, data in SHOP_ITEMS.items():
@@ -196,6 +201,7 @@ with st.sidebar.expander("🛠️ Shop"):
 st.sidebar.markdown("---")
 st.sidebar.caption("Strain Library")
 
+# Prepare Detailed Sidebar Data
 library_data = []
 for name, data in st.session_state.strains.items():
     t_str = ", ".join([f"{k}({v})" for k,v in data['terpenes'].items()]) if data['terpenes'] else "-"
@@ -203,7 +209,7 @@ for name, data in st.session_state.strains.items():
         "Name": name,
         "Pot": data['potency'],
         "Yld": data['yield'],
-        "Res": data['resistance'], # Added Res to Sidebar for quick check
+        "Res": data['resistance'], 
         "Terps": t_str
     })
 
@@ -223,13 +229,13 @@ w_name = st.session_state.current_weather
 w_data = WEATHER_PATTERNS[w_name]
 
 # Visual Weather Card
-weather_color = "green" if w_name == "Sunny & Mild" else "red"
+weather_color = "#3dd56d" if w_name == "Sunny & Mild" else "#ff4b4b"
 with st.container():
     st.markdown(f"""
-    <div style="padding: 15px; border-radius: 10px; border: 1px solid #333; background-color: #262730; margin-bottom: 20px;">
+    <div style="padding: 15px; border-radius: 10px; border: 1px solid #444; background-color: #262730; margin-bottom: 20px;">
         <h3 style="margin:0; color:{weather_color};">{w_data['icon']} FORECAST: {w_name}</h3>
         <p style="margin:5px 0 0 0;">{w_data['desc']}</p>
-        <p style="margin:5px 0 0 0; font-size: 0.8em; color: #888;">Required Resistance: <strong>{w_data['min_resist']}</strong></p>
+        <p style="margin:5px 0 0 0; font-size: 0.9em; color: #aaa;">Required Resistance: <strong>{w_data['min_resist']}</strong></p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -248,6 +254,8 @@ if st.session_state.phase == "PLANNING":
                 if new_name and st.session_state.credits >= cost:
                     st.session_state.credits -= cost
                     st.session_state.breeds_left -= 1
+                    
+                    # HARD MODE: Cost increases
                     st.session_state.breed_cost += 50 
                     
                     s1, s2 = st.session_state.strains[p1], st.session_state.strains[p2]
@@ -285,10 +293,10 @@ if st.session_state.phase == "PLANNING":
             t_profile = s_data['terpenes']
             t_str = ", ".join([f"{k}({v})" for k,v in t_profile.items()]) if t_profile else "None"
             
-            # Highlight Resistance if it's too low for current weather
+            # Weather Warning Logic
             res_val = s_data['resistance']
             if res_val < w_data['min_resist']:
-                st.error(f"⚠️ Res: {res_val} (Too Low!)")
+                st.error(f"⚠️ Res: {res_val} (RISKY!)")
             else:
                 st.caption(f"🛡️ Res: {res_val} (Safe)")
             
@@ -298,7 +306,8 @@ if st.session_state.phase == "PLANNING":
     st.markdown("---")
     
     if st.button("🌱 START GROW SEASON", type="primary"):
-        progress_text = "Checking conditions... Plants are growing..."
+        # Progress Bar
+        progress_text = "Plants are growing... checking humidity..."
         my_bar = st.progress(0, text=progress_text)
         for percent_complete in range(100):
             time.sleep(0.04) 
@@ -322,7 +331,7 @@ elif st.session_state.phase == "HARVEST":
                 st.markdown(f"### Plot {i+1}")
                 st.info(f"**{res['strain']}**")
                 
-                # Show Weather Impact
+                # Show Weather Impact status
                 if "Damaged" in res['status']:
                     st.error(res['status'])
                 else:
@@ -333,6 +342,7 @@ elif st.session_state.phase == "HARVEST":
                 if res['terp_bonus'] > 0:
                     st.caption(f"🌟 +${res['terp_bonus']} from Terps")
 
+    # FINANCIAL SUMMARY (Net Profit Calculation)
     st.markdown("---")
     st.subheader("📊 Season Financials")
     
