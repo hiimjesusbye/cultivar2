@@ -35,7 +35,6 @@ FLAVOR_COMBOS = {
     ("C", "P"): {"name": "Peppery Pine", "icon": "🌲🔥"}
 }
 
-# NEW: Cultivation Inputs
 SUBSTRATES = {
     "soil": {"name": "Living Soil", "cost_mult": 1.0, "yield_mult": 0.9, "value_mult": 1.25, "desc": "Lower yield, Premium price."},
     "hydro": {"name": "Deep Water Hydro", "cost_mult": 1.5, "yield_mult": 1.3, "value_mult": 1.0, "desc": "Max yield, Standard price."},
@@ -64,7 +63,6 @@ class Batch:
     harvest_season: int
     status: str  
     seasons_remaining: int
-    # Track how it was grown for history
     method: str = "Unknown"
     
     def to_dict(self): return asdict(self)
@@ -87,19 +85,17 @@ class Strain:
     parent_ids: List[str] = field(default_factory=list)
     
     # State
-    is_proven: bool = True # If False, stats are hidden (Seed)
+    is_proven: bool = True 
     is_sequenced: bool = False
+    times_grown: int = 0  # <--- FIXED: RESTORED THIS MISSING FIELD
     
     # Inventory
     stock_standard: int = 0
     stock_artisanal: int = 0
 
     def generate_random_stats(self):
-        """Called when seed is first harvested to 'roll' the phenotype."""
         base_pot = 50
         base_yld = 50
-        
-        # Structure Modifier
         s_alleles = self.genetics.get("structure", ("t", "t"))
         if "T" in s_alleles: 
             base_pot += 15
@@ -107,11 +103,8 @@ class Strain:
         else: 
             base_pot -= 5
             base_yld += 20
-        
-        # Aroma Modifier
         a_alleles = self.genetics.get("aroma", ("L", "L"))
         if a_alleles[0] != a_alleles[1]: base_pot += 5
-        
         self.potency = max(10, min(100, int(base_pot + random.uniform(-10, 10))))
         self.yield_amount = max(10, min(100, int(base_yld + random.uniform(-10, 10))))
         self.is_proven = True
@@ -138,7 +131,6 @@ class GrowRoom:
     id: int
     strain_id: Optional[str] = None 
     strain_name: Optional[str] = None
-    # Configuration
     substrate: Optional[str] = None
     nutrient: Optional[str] = None
     
@@ -155,8 +147,6 @@ class BreedingEngine:
         child.generation = max(parent_a.generation, parent_b.generation) + 1
         child.parents_text = f"{parent_a.name} x {parent_b.name}"
         child.parent_ids = [parent_a.id, parent_b.id]
-        
-        # Genetics
         for key in ["structure", "resistance"]:
             a = random.choice(parent_a.genetics[key])
             b = random.choice(parent_b.genetics[key])
@@ -165,7 +155,6 @@ class BreedingEngine:
         terp_b = random.choice(parent_b.genetics["aroma"])
         child.genetics["aroma"] = tuple(sorted((terp_a, terp_b)))
         
-        # NEW: It starts unproven (stats not calculated yet)
         child.is_proven = False 
         child.potency = 0
         child.yield_amount = 0
@@ -184,45 +173,31 @@ class FacilityEngine:
         
         for room in occupied:
             strain = next(s for s in strains if s.id == room.strain_id)
-            
-            # 1. Config Data
             sub_data = SUBSTRATES[room.substrate]
             nut_data = NUTRIENTS[room.nutrient]
             
-            # 2. Cost Calculation
-            # Base cost depends on speed
             days = 100 - strain.get_growth_speed()
             base_run_cost = 500 + (days * 12)
-            
-            # Apply Config Multipliers
             run_cost = (base_run_cost * sub_data["cost_mult"]) + nut_data["cost"]
             total_cost += int(run_cost)
             
-            # 3. Pheno Hunt Check (Reveal Stats if Seed)
             newly_proven = False
             if not strain.is_proven:
                 strain.generate_random_stats()
                 newly_proven = True
             
-            # 4. Yield Calculation
-            # Base Yield (Strain Stat) * Substrate Mult * Nutrient Bonus
             base_yield = strain.yield_amount * 2.5 
             variance = random.uniform(0.9, 1.1)
-            
             yield_mult = sub_data["yield_mult"] + nut_data["yield_bonus"]
             final_yield = int(base_yield * variance * yield_mult)
             
-            # 5. Risk Calculation
             event_msg = None
             is_hardy = "R" in strain.genetics["resistance"]
             base_risk = 0.05 if is_hardy else 0.25
-            
-            # Modifiers
             risk_mod = nut_data["risk"]
             if "hepa" in upgrades: risk_mod -= 0.10
             
             total_risk = max(0.01, base_risk + risk_mod)
-            
             if random.random() < total_risk:
                 loss = int(final_yield * 0.4)
                 final_yield -= loss
@@ -244,7 +219,6 @@ class FacilityEngine:
 class CuringEngine:
     @staticmethod
     def create_batch(strain: Strain, amount: int, season: int, room: GrowRoom) -> Batch:
-        # Determine method string for flavor text
         sub_name = SUBSTRATES[room.substrate]['name']
         return Batch(
             id=str(uuid.uuid4())[:8],
@@ -343,8 +317,7 @@ def load_game_state(json_file):
 if "strains" not in st.session_state:
     s1 = Strain(name="Lemon Sol")
     s1.genetics = {"structure": ("T", "T"), "resistance": ("r", "r"), "aroma": ("L", "P")} 
-    s1.generate_random_stats() # Starters are proven
-    
+    s1.generate_random_stats() 
     s2 = Strain(name="Musky Spice")
     s2.genetics = {"structure": ("t", "t"), "resistance": ("R", "R"), "aroma": ("C", "M")} 
     s2.generate_random_stats()
@@ -389,23 +362,18 @@ with t1:
                 st.write(f"**Room {room.id}**")
                 
                 if room.strain_id is None:
-                    # CONFIGURATION PHASE
                     choice = st.selectbox(f"Strain", ["-"] + [s.name for s in st.session_state["strains"]], key=f"s_{room.id}")
                     sub_c = st.selectbox("Substrate", list(SUBSTRATES.keys()), format_func=lambda x: SUBSTRATES[x]['name'], key=f"sub_{room.id}")
                     nut_c = st.selectbox("Nutrients", list(NUTRIENTS.keys()), format_func=lambda x: NUTRIENTS[x]['name'], key=f"nut_{room.id}")
                     
                     if choice != "-":
-                        # Cost Preview
                         sel_strain = next(s for s in st.session_state["strains"] if s.name == choice)
                         days = 100 - sel_strain.get_growth_speed()
                         base = 500 + (days * 12)
-                        
                         sub_mult = SUBSTRATES[sub_c]["cost_mult"]
                         nut_cost = NUTRIENTS[nut_c]["cost"]
                         final_est = int((base * sub_mult) + nut_cost)
-                        
                         st.caption(f"Est Cost: ${final_est}")
-                        
                         if st.button("Assign", key=f"btn_{room.id}"):
                             room.strain_id = sel_strain.id
                             room.strain_name = sel_strain.name
@@ -413,21 +381,14 @@ with t1:
                             room.nutrient = nut_c
                             st.rerun()
                 else:
-                    # OCCUPIED STATE
                     st.info(f"Growing: **{room.strain_name}**")
                     strain = next(s for s in st.session_state["strains"] if s.id == room.strain_id)
-                    
-                    if not strain.is_proven:
-                        st.warning("🌱 Pheno Hunting (Seed)")
-                    
+                    if not strain.is_proven: st.warning("🌱 Pheno Hunting (Seed)")
                     st.caption(f"Method: {SUBSTRATES[room.substrate]['name']}")
-                    
                     if st.button("Clear", key=f"clr_{room.id}"):
                         room.strain_id = None
                         st.rerun()
                     active_count += 1
-                    
-                    # Recalculate cost for Total display
                     days = 100 - strain.get_growth_speed()
                     base = 500 + (days * 12)
                     sub_mult = SUBSTRATES[room.substrate]["cost_mult"]
@@ -441,22 +402,13 @@ with t1:
         else:
             st.session_state["funds"] -= report["cost"]
             st.session_state["season"] += 1
-            
             for res in report["results"]:
-                # Create batch
                 room_obj = next(r for r in st.session_state["rooms"] if r.id == res["room_id"])
                 new_batch = CuringEngine.create_batch(res["strain"], res["yield"], st.session_state["season"], room_obj)
                 st.session_state["batches"].append(new_batch)
-                
-                # Logs
                 st.toast(f"R{res['room_id']} Harvest: {res['yield']}g")
-                if res["proven_now"]:
-                    st.toast(f"🧬 Analysis Complete: {res['strain'].name} stats revealed!", icon="🔎")
-                
-                # Clear Room
+                if res["proven_now"]: st.toast(f"🧬 Analysis Complete: {res['strain'].name} stats revealed!", icon="🔎")
                 room_obj.strain_id = None
-                
-            # Process Curing
             CuringEngine.process_batches(st.session_state["batches"], st.session_state["strains"])
             st.rerun()
 
@@ -470,12 +422,6 @@ with t2:
                 c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
                 c1.write(f"**{b.strain_name}** ({b.amount}g)")
                 c1.caption(f"Grown in: {b.method}")
-                
-                # Dynamic Pricing based on how it was grown? 
-                # For now, substrates boost YIELD or COST. We could add a value mult here later.
-                # Currently value mult is applied at sale time implicitly if we wanted, 
-                # but let's stick to the MarketEngine logic which uses genetics.
-                
                 val_fresh = MarketEngine.calculate_value(base_price, next(s for s in st.session_state["strains"] if s.id == b.strain_id), trend_code, "Fresh")
                 if c2.button(f"Sell Fresh (${int(b.amount * val_fresh)})", key=f"sf_{b.id}"):
                     st.session_state["funds"] += int(b.amount * val_fresh)
@@ -489,7 +435,6 @@ with t2:
                     b.status = "Deep Curing"
                     b.seasons_remaining = 2
                     st.rerun()
-    
     st.markdown("### ⏳ Curing")
     aging = [b for b in st.session_state["batches"] if b.status in ["Curing", "Deep Curing"]]
     for b in aging:
@@ -535,18 +480,12 @@ with t4:
 with t5:
     st.subheader("Breeding Lab")
     c1, c2 = st.columns(2)
-    # Filter only PROVEN strains for breeding parents (can't breed a mystery seed)
     proven_strains = [s.name for s in st.session_state["strains"] if s.is_proven]
-    
-    if len(proven_strains) < 2:
-        st.warning("You need at least 2 Proven Strains to breed.")
+    if len(proven_strains) < 2: st.warning("Need 2 Proven Strains to breed.")
     else:
         p1 = st.selectbox("Parent A", proven_strains, key="p1")
         p2 = st.selectbox("Parent B", proven_strains, key="p2")
-        name = st.text_input("Project Name", value=f"Seed-{random.randint(100,999)}")
-        
-        st.caption("Breeding produces a **Mystery Seed**. You must grow it to see its traits!")
-        
+        name = st.text_input("Name", value=f"Seed-{random.randint(100,999)}")
         if st.button("🧬 Cross ($200)"):
             if st.session_state["funds"] < 200: st.error("No Funds")
             else:
@@ -562,7 +501,6 @@ with t6:
     sel_name = st.selectbox("Inspect Strain", [s.name for s in st.session_state["strains"]])
     sel = next(s for s in st.session_state["strains"] if s.name == sel_name)
     aroma_data = sel.get_aroma_data()
-    
     if not sel.is_proven:
         st.info(f"🌱 **{sel.name}** (Unproven Seed)")
         st.write("Grow this strain to reveal its stats!")
@@ -570,24 +508,17 @@ with t6:
     else:
         st.markdown(f"### {sel.name} {aroma_data['icon']}")
         col_vis, col_dna, col_hist = st.columns([1, 1, 1])
-        
         with col_vis:
             st.caption("Potency")
             st.progress(sel.potency/100, text=f"{sel.potency}/100")
             st.caption("Yield")
             st.progress(sel.yield_amount/100, text=f"{sel.yield_amount}/100")
             st.write(f"📦 **{sel.stock_standard}g** Std | ⭐ **{sel.stock_artisanal}g** Art")
-
         with col_dna:
             if "seq" in st.session_state["upgrades"] or sel.is_sequenced:
-                s_pair = sel.genetics['structure']
-                st.markdown(f"**Structure:** `{s_pair}`")
-                r_pair = sel.genetics['resistance']
-                st.markdown(f"**Hardiness:** `{r_pair}`")
-                a_pair = sel.genetics['aroma']
-                st.markdown(f"**Aroma:** `{a_pair}`")
-            else:
-                st.warning("🔒 Sequence Hidden")
-
+                st.markdown(f"**Structure:** `{sel.genetics['structure']}`")
+                st.markdown(f"**Hardiness:** `{sel.genetics['resistance']}`")
+                st.markdown(f"**Aroma:** `{sel.genetics['aroma']}`")
+            else: st.warning("🔒 Sequence Hidden")
         with col_hist:
             st.code(get_lineage_text(sel, st.session_state["strains"]), language="text")
